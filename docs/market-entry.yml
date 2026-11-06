@@ -1,0 +1,18 @@
+# DSH 插件市场条目草稿
+#
+# 用法：仓库上传满 1 天后，到 https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
+#   fork → 在 data/plugins/ 下新建文件 <你的GitHub用户名>__dsh-haloflux.yml → 粘贴下面内容 → 提 PR。
+#   文件名必须与仓库一一对应；url 必须与仓库地址完全一致（不要带 .git、不要带末尾斜杠）。
+#
+# 规则要点（已按官方 contributing.md 核对）：
+#   - 只有 description.en 是必填；含「冒号+空格」必须加引号（本文件已避免）。
+#   - 不要手改 README.md / README.zh.md，它们由脚本生成。
+#   - 仓库需声明 dsh.bundle（本包已声明），仓库需创建满 1 天，并给仓库加 dsh-plugin topic。
+#   - 描述只陈述功能，不带营销词；会被按代码核对。
+
+url: https://github.com/Michael-ZAG/dsh-haloflux
+name: Michael-ZAG/dsh-haloflux
+category: ui
+description:
+  en: Live light-ring background for the DSH web GUI, driven by the current session's token stream and tool calls.
+  zh: 由当前会话的 token 流与工具调用驱动的 DSH Web GUI 光环背景。

@@ -1,0 +1,59 @@
+{
+  "name": "dsh-haloflux",
+  "version": "0.7.1",
+  "description": "A live light-ring background for the DeepSeek Harness Web GUI, driven by the current session: ring rotation, token capture and beams follow the model call, with a Settings page and a three-level data capture dial. Unofficial distribution fork of Ke-wood/dsh-haloflux.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Ryder191 (RYDER CODE / Ms MAIKEBAIs CAT) - original HALOFLUX",
+  "contributors": [
+    "Ke-wood - DeepSeek Harness port"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Michael-ZAG/dsh-haloflux.git"
+  },
+  "homepage": "https://github.com/Michael-ZAG/dsh-haloflux#readme",
+  "bugs": {
+    "url": "https://github.com/Michael-ZAG/dsh-haloflux/issues"
+  },
+  "type": "module",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "haloflux",
+    "background",
+    "decoration",
+    "canvas",
+    "visualization"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-rc.5 <0.3.0-0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-session"
+      ]
+    }
+  }
+}
