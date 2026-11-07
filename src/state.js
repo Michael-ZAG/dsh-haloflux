@@ -40,6 +40,14 @@ const HalofluxState = (() => {
       // halo sits over the left column and its beams sweep across the transcript.
       opacity: 0.45, blend: 0, activityGain: 1,
       centerX: -0.15, centerY: 0, scale: 0.6, hudOn: 0, feedOn: 1, dataMode: 1,
+      hudRailW: 0, hudReserve: 220, labOn: 1,
+      // top safety line + auto-hide: hudTopPad is the toolbar allowance under the window
+      // chrome (the rail must start below the session toolbar); advOn brings the removed
+      // ADVECTION panel back; hudAutoHide retreats the rail on pages without a composer.
+      hudTopPad: 44, hudAutoHide: 1, advOn: 0,
+      // the top Stats row is the one always-on readout: H only toggles the rail and
+      // the dock, so statsOn is the single switch that can take it away.
+      statsOn: 1,
       // the author's auto camera (occasional push-in on a detail) is off by default;
       // the Stats bar button and the `camera` slider both switch it back on.
       camera: 0,

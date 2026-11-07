@@ -153,7 +153,9 @@ function boot(opts) {
 
 /* ================= 1. metadata ================= */
 ok(!!E && typeof E.create === 'function', 'HalofluxEngine.create is a function');
-ok(E.PARAMS.length === 110, 'PARAMS count = 110 (got ' + E.PARAMS.length + ')');
+/* bumped when a param is added: 110 -> 112 (hudRailW/hudReserve) -> 113 (labOn) -> 116 (hudTopPad/advOn/hudAutoHide) -> 117 (statsOn) */
+const PARAM_N = 117;
+ok(E.PARAMS.length === PARAM_N, 'PARAMS count = ' + PARAM_N + ' (got ' + E.PARAMS.length + ')');
 const keys = E.PARAMS.map(p => p[0]);
 ok(new Set(keys).size === keys.length, 'PARAMS keys are unique');
 const groups = [...new Set(E.PARAMS.map(p => p[5]))];
@@ -176,7 +178,7 @@ const flag = k => row(k)[6];
 ok(flag('ringWidth') === 'resize' && flag('rimWidth') === 'slots' && flag('webBright') === 'web'
   && flag('webBlur') === 'web' && flag('flyerCount') === 'flyers', 'rebuild flags preserved');
 ok(E.PARAMS.filter(p => p[6]).length === 5, 'exactly 5 rebuild params');
-ok(Object.keys(E.BASE).length === 110 && keys.every(k => k in E.BASE), 'BASE covers all 110 keys');
+ok(Object.keys(E.BASE).length === PARAM_N && keys.every(k => k in E.BASE), 'BASE covers all ' + PARAM_N + ' keys');
 ok(row('idleMotion')[1] === '静默态强度', 'idleMotion label = 静默态强度');
 ok(E.BASE.idleMotion === 0.06 && E.PRESETS.MINE.idleMotion === 0.06, 'idleMotion default = 0.06');
 ok(E.BASE.camera === 1, 'BASE.camera untouched (still 1; mount turns it off)');
@@ -203,11 +205,11 @@ ok(!!eng, 'create({canvas, live, params}) returns an engine');
 ok(opCount === ctxOpsBeforeCreate, 'create() performs no canvas work (waits for start/resize)');
 ok(['setParams', 'getParams', 'resize', 'start', 'stop', 'dispose', 'revolve', 'debug']
   .every(k => typeof eng[k] === 'function'), 'api includes revolve() and debug()');
-ok(Object.keys(eng.getParams()).length === 110, 'getParams() returns the 110-key copy');
+ok(Object.keys(eng.getParams()).length === PARAM_N, 'getParams() returns the ' + PARAM_N + '-key copy');
 const dbgKeys = ['ringRot', 'spinOffset', 'env', 'out', 'mo', 'present', 'running'];
 const d0 = eng.debug();
 ok(dbgKeys.every(k => k in d0), 'debug() exposes ' + dbgKeys.join('/'));
-ok(typeof d0.params === 'object' && Object.keys(d0.params).length === 110, 'debug().params is the 110-key copy');
+ok(typeof d0.params === 'object' && Object.keys(d0.params).length === PARAM_N, 'debug().params is the ' + PARAM_N + '-key copy');
 ok(d0.present === true && d0.running === false && d0.env === 0 && d0.out === 0 && d0.mo === 0,
   'debug() initial: present (field missing ⇒ true), not running, level 0');
 

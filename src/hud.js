@@ -36,7 +36,8 @@ const HalofluxHud = (() => {
     fieldBright: 1, guardBlur: 0, motionQuiet: 0, readFade: 0,
     tintAmount: 0, tintHue: 210, tintSat: 1.6, tintFollow: 0,
     ctxArc: 1, toolBeam: 1, errFx: 0, glitchAmt: 0.6, stepTicks: 1,
-    hudScale: 1, hudInset: 12, hudTop: 6,
+    hudScale: 1, hudInset: 12, hudTop: 6, hudTopPad: 44, hudRailW: 0, hudReserve: 220, labOn: 1,
+    advOn: 0, hudAutoHide: 1, statsOn: 1,
     phaseRing: 1, errPin: 1, tpsRibbon: 1, thinkPulse: 1,
     glowBlurSmall: 1, adaptQuality: 1, idleSleepMs: 0, hudFadeMs: 0,
   };
@@ -212,7 +213,7 @@ const HalofluxHud = (() => {
   const CSS_STATS = `
 .hfx-stats{position:absolute;top:var(--hfx-hud-top,6px);left:var(--hfx-hud-x,50%);transform:translateX(-50%);display:flex;align-items:center;gap:10px;
   max-width:calc(100vw - 320px);overflow:hidden;padding:4px 9px;border-radius:8px;box-sizing:border-box;
-  pointer-events:none;contain:layout style;
+  pointer-events:none;contain:layout style;-webkit-app-region:no-drag;
   font:11px/1.3 ${FONT_STACK};letter-spacing:.06em;color:${T_LABEL_2};
   background:color-mix(in srgb,var(--dsw-alias-bg-base,#0b0d10) var(--hfx-plate,72%),transparent);
   border:1px solid color-mix(in srgb,var(--dsw-alias-border-l2,#2a2f3a) 70%,transparent);
@@ -222,6 +223,7 @@ const HalofluxHud = (() => {
 .hfx-stats .hfx-v{font-variant-numeric:tabular-nums;color:${T_LABEL_1};white-space:nowrap}
 .hfx-stats .hfx-state{font-weight:700;letter-spacing:.14em;white-space:nowrap;color:${T_LABEL_3}}
 .hfx-stats .hfx-state-run{color:${T_WARN}}
+.hfx-stats .hfx-state-warn{color:${T_ERR}}
 .hfx-stats .hfx-dot{width:6px;height:6px;border-radius:50%;flex:none;display:inline-block;background:${T_LABEL_3}}
 .hfx-stats .hfx-dot-run{background:${T_WARN};animation:hfx-pulse 1.15s ease-in-out infinite}
 .hfx-stats .hfx-gear{pointer-events:auto;flex:none;width:20px;height:18px;line-height:1;font:inherit;font-size:11px;
@@ -246,6 +248,17 @@ const HalofluxHud = (() => {
     const t = safeT(props);
     const live = props.live || {};
     const cameraOn = Number((props.params || {}).camera) >= 0.5;
+    // engine diagnostics: a parked loop, a missing engine or a void presence is the
+    // only way the frame renders nothing while the HUD still draws, so say it out
+    // loud instead of leaving the user staring at a black halo.
+    const diag = props.diag || null;
+    const diagLabel = !diag ? ''
+      : diag.missing ? 'NOENG'
+      : (diag.w < 40 || diag.h < 40) ? 'SIZE0'
+      : !diag.loop ? 'PARKED'
+      : !diag.present ? 'VOID'
+      : diag.target < 0.02 ? 'DIM 0'
+      : diag.asleep ? 'ASLEEP' : '';
     const view = React.useMemo(() => ({
       running: live.running === true,
       total: fmtCount(live.totalTokens),
@@ -260,6 +273,10 @@ const HalofluxHud = (() => {
       h('span', { className: 'hfx-dot' + (view.running ? ' hfx-dot-run' : ''), 'aria-hidden': 'true' }),
       h('span', { className: 'hfx-state' + (view.running ? ' hfx-state-run' : '') },
         t(view.running ? 'ui.running' : 'ui.idle')),
+      diagLabel ? h('span', {
+        className: 'hfx-state hfx-state-warn',
+        title: 'haloflux engine: loop / presence / level',
+      }, diagLabel) : null,
       h(Kpi, { label: t('ui.tokens'), value: view.total, w: 56 }),
       h(Kpi, { label: t('ui.rate'), value: view.rate, w: 56 }),
       h(Kpi, { label: t('ui.context'), value: view.ctx, w: 56 }),
@@ -287,7 +304,7 @@ const HalofluxHud = (() => {
    * ------------------------------------------------------------------ */
 
   const CSS_FEED = `
-.hfx-feed{position:absolute;left:var(--hfx-hud-inset,12px);bottom:var(--hfx-hud-inset,12px);width:302px;pointer-events:none;
+.hfx-feed{width:100%;pointer-events:none;box-sizing:border-box;
   display:flex;flex-direction:column;gap:6px;contain:layout style;
   font:11px/1.45 ${FONT_STACK};letter-spacing:.06em;color:${T_LABEL_2}}
 .hfx-pane{box-sizing:border-box;padding:5px 8px 6px;border-radius:8px;
@@ -354,7 +371,7 @@ const HalofluxHud = (() => {
    * ------------------------------------------------------------------ */
 
   const CSS_TOOLS = `
-.hfx-tools{position:absolute;right:var(--hfx-hud-inset,12px);bottom:var(--hfx-hud-inset,12px);width:252px;pointer-events:none;box-sizing:border-box;
+.hfx-tools{width:100%;pointer-events:none;box-sizing:border-box;
   padding:5px 8px 6px;border-radius:8px;contain:layout style;
   font:11px/1.45 ${FONT_STACK};letter-spacing:.06em;color:${T_LABEL_2};
   background:color-mix(in srgb,var(--dsw-alias-bg-base,#0b0d10) var(--hfx-plate,72%),transparent);
@@ -410,9 +427,10 @@ const HalofluxHud = (() => {
    * ------------------------------------------------------------------ */
 
   const CSS_CONSOLE = `
-.hfx-console{position:absolute;top:var(--hfx-hud-top,8px);right:var(--hfx-hud-inset,12px);width:380px;max-width:calc(100vw - 24px);
-  max-height:76vh;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;
-  pointer-events:auto;border-radius:10px;contain:layout style;
+.hfx-console{position:absolute;top:calc(var(--dsh-frame-chrome-top,0px) + var(--hfx-hud-top,8px));right:var(--hfx-hud-inset,12px);width:380px;max-width:calc(100vw - 24px);
+  max-height:calc(100% - var(--dsh-frame-chrome-top,0px) - var(--hfx-hud-top,8px) - var(--hfx-hud-reserve,220px));
+  display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;
+  pointer-events:auto;border-radius:10px;contain:layout style;-webkit-app-region:no-drag;z-index:3;
   font:11px/1.45 ${FONT_STACK};letter-spacing:.06em;color:${T_LABEL_2};
   background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#0e0f12) 88%,transparent);
   border:1px solid color-mix(in srgb,var(--dsw-alias-border-l3,#3a3e46) 78%,transparent);

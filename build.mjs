@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const order = ['engine.js', 'state.js', 'live.js', 'hud.js', 'settings.js', 'mount.js'];
+const order = ['engine.js', 'state.js', 'live.js', 'lab.js', 'hud.js', 'settings.js', 'mount.js'];
 
 const fragments = order.map((file) => {
   const abs = path.join(root, 'src', file);

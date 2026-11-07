@@ -1,13 +1,6 @@
+> **当前版本：v0.8.0**（2026-11-08） · [更新日志](CHANGELOG.md) · [历史版本下载](https://github.com/Michael-ZAG/dsh-haloflux/releases)
+> 仓库根目录始终是最新版本；旧版本（≤ 0.7.1）保留在 Releases 里，可随时下载。
 # dsh-haloflux — 实时光环背景
-
-> **非官方发行分支（unofficial fork）**
->
-> 本仓库是 [Ke-wood/dsh-haloflux](https://github.com/Ke-wood/dsh-haloflux) 的公开发行分支，用于在 DSH 插件市场分发。
-> 原始视觉与动效设计 © 2026 Ryder191（RYDER CODE / Ms MAIKEBAIs CAT）— [Ryder191/haloflux](https://github.com/Ryder191/haloflux)；
-> DeepSeek Harness 适配部分 © Ke-wood。本分支只做打包与分发，不代表原作者发布，也不提供任何担保。
->
-> 许可：[PolyForm Noncommercial License 1.0.0](LICENSE) — **仅限非商业使用**。
-> 再分发必须同时保留 `LICENSE` 与 `NOTICE`（含 Required Notice 两行）。
 
 把 **HALOFLUX** 的纯 Canvas 光场可视化，做成 DeepSeek Harness Web GUI 的全帧背景装饰，
 并把原作里**预设的模拟数据**换成**当前会话的实时数据**：圆盘转动、词元抓取、光束迸发
@@ -22,11 +15,11 @@
 
 | 能力 | 说明 |
 |---|---|
-| 全帧背景 | 挂载在 `shell.overlay`：透明底 + 加色发光，点击穿透，不遮挡聊天界面 |
+| 全帧背景 | 注册在 `shell.overlay`；DOM 再经 `createPortal` 下沉进 `.mP3x-q_frame` 里的 `.hfx-portal`（z-index 1）——透明底 + 加色发光，点击穿透，压在聊天之上、输入框与弹窗之下 |
 | 会话驱动 | 词元、工具调用、`turn/step`、tok/s、上下文占用全部来自真实会话事件流 |
 | 三档数据抓取 | 纯动画 / 混合 30% / 完全抓取，见下文 |
-| 设置页面 | **设置 → HALOFLUX**：档位、预设、导入导出、全部 79 个参数 |
-| HUD | `H` 键：KPI 条、事件流、工具调度、运镜按钮（默认关闭） |
+| 设置页面 | **设置 → HALOFLUX**：档位、预设、导入导出、全部 117 个参数 |
+| HUD | `H` 键只切换右侧 5 面板机架（事件流 / 12 宫格工具调度 / 方法工作台 / 抽取路由 / 参考矩阵）+ 右下 2 面板底座（校验缓冲 / 差分场）；顶部 KPI 条是常驻读数，不受 `H` 影响（`statsOn` 单独控制）。机架顶端留出**工具栏安全线**（`hudTopPad`），不压窗口按钮与工具栏图标；打开上下文页 / 壁纸设置 / 画布等**没有输入框的页面**或任何模态时，机架与底座自动淡出，回到会话自动恢复（`hudAutoHide`） |
 | 三段状态机 | 运行态 / 静默态 / 无会话 各有目标强度，起势与收势独立时长、可调曲线 |
 | 切会话转一圈 | 圆盘平滑转满 360°，外圈光束按层视差跟随 |
 | 切换动效（5 个开关） | 外圈跟随 / 内容逐块揭示 / 亮度脉冲 / 色相扫过 / 镜头轻推，各自独立可关 |
@@ -35,17 +28,8 @@
 
 需要已安装 DeepSeek Harness（桌面版或 `dsh web`）。
 
-三种装法，任选其一：
-
 ```text
-# 1) 从 GitHub 直接装（推荐，无需 npm 发布）
-dsh plugin --profile desktop add "github:Michael-ZAG/dsh-haloflux"
-
-# 2) 从本地目录装
 plugin_manager install_bundle  target=<本包目录的绝对路径>
-
-# 3) 插件市场
-插件 → 插件市场 → 搜索 haloflux → 安装
 ```
 
 安装后刷新页面，侧栏底部 **设置 → HALOFLUX** 出现即成功。
@@ -96,8 +80,8 @@ plugin_manager install_bundle  target=<本包目录的绝对路径>
 
 ## 五、参数
 
-共 **109 项**，分 12 组：原作 **56 项**（`全局` 5 / `圆环` 7 / `圈内` 18 / `环外` 17 / `空间层次` 9），
-本项目新增 **53 项**（`插件` 23 + `分层` 11 + `数据` 4 + `HUD` 3 + `配色` 4 + `状态` 4 + `性能` 4）：
+共 **117 项**，分 12 组：原作 **56 项**（`全局` 5 / `圆环` 7 / `圈内` 18 / `环外` 17 / `空间层次` 9），
+本项目新增 **61 项**（`插件` 23 + `分层` 11 + `数据` 5 + `HUD` 10 + `配色` 4 + `状态` 4 + `性能` 4）：
 
 | 参数 | 默认 | 作用 |
 |---|---|---|
@@ -106,7 +90,8 @@ plugin_manager install_bundle  target=<本包目录的绝对路径>
 | `activityGain` | 1 | 活跃度对生成速率的增益 |
 | `centerX` / `centerY` | -0.15 / 0 | 构图中心偏移 |
 | `scale` | 0.6 | 整体缩放 |
-| `hudOn` | 0 | HUD 开关 |
+| `hudOn` | 0 | HUD 开关（只切机架 + 底座；`H` 键） |
+| `statsOn` | 1 | 顶部 KPI 统计条开关，不受 `H` 影响 |
 | `feedOn` | 1 | 事件流开关 |
 | `dataMode` | 1 | 数据抓取档位 0/1/2 |
 | `backdrop` | 0 | 深色底比例；0 = 纯透明发光 |
@@ -168,7 +153,21 @@ plugin_manager install_bundle  target=<本包目录的绝对路径>
 | `hudScale` | 1 | HUD 缩放 0.8–1.6（四角锚点不动） |
 | `hudInset` | 12 | HUD 距边 px |
 | `hudTop` | 6 | 顶部数据条的下移量 px |
+| `hudTopPad` | 44 | **工具栏安全线**：右栏顶端再往下让出的 px（0–120）。右栏 top = `--dsh-frame-chrome-top`（Windows 标题栏，约 40）+ `hudTop` + `hudTopPad`，40 + 6 + 44 ≈ 90，正好落在会话工具栏下沿之下 |
+| `hudRailW` | 0 | 右栏宽度 px（0 = 自适应 `clamp(240px,20vw,320px)`） |
+| `hudReserve` | 220 | 右栏底部预留 px（给右下角的鲸鱼挂件，机架与底座都不进这块区域） |
+| `labOn` | 1 | 研究面板组：1 = 5 面板机架 + 2 面板底座，0 = 回到旧的事件流 + 工具调度两栏 |
+| `advOn` | 0 | ADVECTION / PARTICLE SOLVER 面板：0 = 不渲染（默认），1 = 在机架最上方多一行（机架随之变 6 行） |
+| `hudAutoHide` | 1 | 没有输入框的页面（上下文页 / 壁纸设置 / 画布等）或任何模态打开时，右栏与底座自动淡出（400ms 一轮检测），回到会话自动恢复；顶部 KPI 条不受影响 |
 | `tintFollow` | 0 | 跟随 DSH 主题色（读 `--dsw-alias-brand-primary` 取色相） |
+
+HUD 分三层叠放：顶部数据条（`--dsh-frame-chrome-top` + `hudTop`）、右侧机架、右下底座。
+整个 HUD 的 DOM 经 `createPortal` 下沉到 `.mP3x-q_frame` → `.hfx-portal`（`position:absolute; inset:0; z-index:1`），
+与宿主自己的 `[data-shell-overlay]`（z-index 20）用同一套绝对定位参照：**渲染顺序仍是 overlay 槽位，DOM 位置却落在对话框之下**。
+机架按 `grid-template-rows:repeat(var(--hfx-rack-rows,5),minmax(0,1fr))` 均分剩余高度（窗口变矮时每格等比缩小、内容裁切而不是撑出滚动条；
+行数由 `labOn` / `feedOn` / `advOn` 动态算，默认 5 行）；
+底座固定在 `bottom:12px`，高 `clamp(170px,19.5vh,210px)`，窗口高度 ≤ 820px 时整个隐藏。
+底座整体 `pointer-events:none`——它压在输入框右侧，任何时候都不吃点击。
 
 控制台里还有：**参数搜索框**（名称或 key，如 `guard`、`色`）、**配色色块**（冰蓝/青绿/紫/品红/琥珀/红/原色 一键切换）、
 以及每个分组的折叠。设置页（Settings → HALOFLUX）列出同一批参数。
@@ -231,6 +230,7 @@ dsh-haloflux/
 │  ├─ engine.js          # Canvas 引擎（渲染、状态机、数据档位）
 │  ├─ state.js           # 参数 store（三个 React 根共用）
 │  ├─ live.js            # 会话实时数据适配
+│  ├─ lab.js              # 右侧 5 面板机架 + 右下 2 面板底座（事件流 / 工具调度 / 方法工作台 / 抽取路由 / 参考矩阵 / 校验缓冲 / 差分场；粒子流场面板保留但默认不渲染，advOn=1 才出，全部移植自上游 lab.html）
 │  ├─ hud.js             # HUD + 参数控件
 │  ├─ settings.js        # 设置 → HALOFLUX 页面
 │  └─ mount.js           # 槽注册、组件装配、快捷键
@@ -274,6 +274,8 @@ node tools/session-switch.cjs   # 切会话回归：运行态不被清、内容�
 - 原作 **HALOFLUX**：Copyright (c) 2026 Ryder191（RYDER CODE / Ms MAIKEBAIs CAT），
   <https://github.com/Ryder191/haloflux>，PolyForm Noncommercial License 1.0.0。
 - 本移植：同样**仅限非商业使用**，可在保留 `LICENSE` 与 `NOTICE` 的前提下自由分发与修改。
+- 右侧 7 面板（5 面板机架 + 2 面板底座，`src/lab.js`；上游的粒子流场面板作为可选第 6 行保留）同样移植自上游 `lab.html`，随上游一并适用 PolyForm Noncommercial 1.0.0：
+  `LAB RACK ported from HALOFLUX by Ryder191 (PolyForm Noncommercial 1.0.0)`。
 - 再分发、二次修改请保留 `NOTICE` 中的 Required Notice 行。
 - 上游已在 `Community` / `社区作品` 一节收录本项目（上游 commit `ff9a4a6`）：
   <https://github.com/Ryder191/haloflux#community>。上游仓库只保留原作代码，插件由本项目独立维护。

@@ -172,6 +172,13 @@ window.__ModuleLoader__.load({
         ['hudScale', 'HUD 缩放', 0.8, 1.6, 0.05, 'HUD'],
         ['hudInset', 'HUD 边距 px', 4, 48, 1, 'HUD'],
         ['hudTop', 'HUD 顶距 px', 0, 80, 1, 'HUD'],
+        ['hudTopPad', '顶部让位 px (工具栏安全线)', 0, 120, 1, 'HUD'],
+        ['hudRailW', 'HUD 右栏宽度 px (0=自适应)', 0, 380, 2, 'HUD'],
+        ['hudReserve', 'HUD 底部预留 px (给挂件)', 120, 400, 10, 'HUD'],
+        ['statsOn', '顶部统计条 (0关 1开, 不受 H 影响)', 0, 1, 1, 'HUD'],
+        ['labOn', '研究面板组 (0关 1开)', 0, 1, 1, 'HUD'],
+        ['advOn', 'ADVECTION 面板 (0关 1开)', 0, 1, 1, 'HUD'],
+        ['hudAutoHide', '无输入框/模态时自动隐藏 (0关 1开)', 0, 1, 1, 'HUD'],
         /* ---- round 6: theme colour (applied by the host as a CSS filter chain) ---- */
         ['tintAmount', '主题染色 强度 (0=原色)', 0, 1, 0.05, '配色'],
         ['tintHue', '主题色相 0-360', 0, 360, 5, '配色'],
@@ -208,7 +215,9 @@ window.__ModuleLoader__.load({
         fieldBlur: 0, ringData: 1, guardOn: 1, guardStrength: 0.4, guardRadius: 0.9, guardColW: 0, plateAlpha: 0.72,
         fieldBright: 1, guardBlur: 0, motionQuiet: 0, readFade: 0,
         ctxArc: 1, toolBeam: 1, errFx: 0, glitchAmt: 0.6, stepTicks: 1,
-        hudScale: 1, hudInset: 12, hudTop: 6, tintFollow: 0,
+        hudScale: 1, hudInset: 12, hudTop: 6, hudTopPad: 44, hudRailW: 0, hudReserve: 220, labOn: 1,
+        statsOn: 1,
+        advOn: 0, hudAutoHide: 1, tintFollow: 0,
         phaseRing: 1, errPin: 1, tpsRibbon: 1, thinkPulse: 1,
         glowBlurSmall: 1, adaptQuality: 1, idleSleepMs: 0, hudFadeMs: 0,
         tintAmount: 0, tintHue: 210, tintSat: 1.6,
@@ -2529,6 +2538,14 @@ window.__ModuleLoader__.load({
           // halo sits over the left column and its beams sweep across the transcript.
           opacity: 0.45, blend: 0, activityGain: 1,
           centerX: -0.15, centerY: 0, scale: 0.6, hudOn: 0, feedOn: 1, dataMode: 1,
+          hudRailW: 0, hudReserve: 220, labOn: 1,
+          // top safety line + auto-hide: hudTopPad is the toolbar allowance under the window
+          // chrome (the rail must start below the session toolbar); advOn brings the removed
+          // ADVECTION panel back; hudAutoHide retreats the rail on pages without a composer.
+          hudTopPad: 44, hudAutoHide: 1, advOn: 0,
+          // the top Stats row is the one always-on readout: H only toggles the rail and
+          // the dock, so statsOn is the single switch that can take it away.
+          statsOn: 1,
           // the author's auto camera (occasional push-in on a detail) is off by default;
           // the Stats bar button and the `camera` slider both switch it back on.
           camera: 0,
@@ -3582,6 +3599,753 @@ window.__ModuleLoader__.load({
       return live;
     };
 
+    /* ================= src/lab.js ================= */
+    /**
+     * HALOFLUX for DSH - lab rack (React, no JSX, no imports).
+     *
+     * Declares exactly one global: `HalofluxLab = { Rack }`.
+     * `React` is injected as a shared const by build.mjs; every element is built
+     * with `h(...)`, never JSX.
+     *
+     * Eight stacked panels, ported from the upstream research HUD:
+     *   rail (6 rows, top to bottom):
+     *   1. ADVECTION / PARTICLE SOLVER - abstract flow field, 320 advected particles
+     *   2. INVESTIGATION FEED          - real session feed + token tail (live.feed / live.recentText)
+     *   3. 12 AGENTS / DISPATCH        - real tool dispatch, 2 columns x 6 rows (live.tools)
+     *   4. METHOD WORKSPACE            - real typewriter over the streaming tail (live.recentText)
+     *   5. SOURCE / EXTRACTION ROUTES  - abstract 6 x 3 route matrix
+     *   6. METHOD / REFERENCE INDEX    - abstract 11 x 28 match heat map + scan line
+     *   bottom-right dock (2 rows, under the whale widget):
+     *   7. VALIDATION / SAMPLE BUFFER  - abstract 3 x 160 sample buffer + cursor
+     *   8. SCENE / DIFFERENCE FIELD    - abstract 2 x (22 x 13) field + histogram
+     *
+     * Panels 1, 5, 6, 7, 8 are abstract instrumentation from the original design and
+     * are marked `illustrative`; they do not claim to show real data. Panels 2, 3 and
+     * 4 are entirely live and stay blank when there is nothing to show.
+     *
+     * Animation contract: one shared 30fps rAF loop for every mounted canvas. Each
+     * panel registers a draw job on mount and unregisters on unmount, so hiding the
+     * HUD (or turning the rack off) leaves no timer behind. `prefers-reduced-motion`
+     * gets a single static frame instead of the loop.
+     *
+     * These panels are `pointer-events:none` (see mount.js BASE_CSS): the rail sits
+     * over the transcript and must never steal a click from the chat.
+     */
+
+    /* HALOFLUX lab panels - ported from HALOFLUX by Ryder191
+       https://github.com/Ryder191/haloflux · PolyForm Noncommercial 1.0.0 */
+    const HalofluxLab = (function () {
+      const h = React.createElement;
+      const FONT = '"JetBrains Mono",Consolas,ui-monospace,monospace';
+      const PINK = '#f0a6c6';
+      const TEAL = '#98e0cf';
+      const WARN = '#ffb648';
+      const OK = '#7ddc9a';
+      const ERR = '#f08a8a';
+
+      const MAX_FEED = 9;          // feed lines kept in the DOM
+      const MAX_AGENTS = 12;       // tool rows in the dispatch panel
+      const MAX_TOK = 110;         // chars of token stream shown
+      const CELLS = 6;             // progress cells per agent row
+      const PARTICLES = 320;       // advected particles
+      const IDX_ROWS = 11;         // reference index rows
+      const IDX_COLS = 28;         // reference index columns
+      const FRAME_MS = 33;         // ~30fps for both canvases
+
+      const MAX_CODE = 8;          // typewriter lines kept in the DOM (METHOD WORKSPACE)
+      const CODE_TICK = 70;        // ms per typewriter beat
+      const CODE_WRAP = 42;        // hard wrap before this many chars
+      const VAL_POINTS = 160;      // samples per curve (VALIDATION)
+      const VAL_LABELS = ['TOKENS', 'RATE', 'DRIFT'];
+      const DIFF_ROWS = 13;        // SCENE / DIFFERENCE FIELD grid
+      const DIFF_COLS = 22;
+      const HIST_BARS = 28;        // histogram under the difference field
+      const ROUTE_ROWS = ['session', 'context', 'tools', 'memory', 'files', 'queue'];
+      const ROUTE_COLS = ['EXTRACT', 'ATTACH', 'INSPECT'];
+      const ROUTE_MARK = ['·', '▪', '▪▪'];
+
+      const rnd = Math.random;
+      const rr = (a, b) => a + rnd() * (b - a);
+      const asText = (v) => (v == null ? '' : String(v));
+      const asList = (v) => (Array.isArray(v) ? v : []);
+      const clip = (s, n) => {
+        s = asText(s);
+        return s.length > n ? s.slice(0, n - 1) + '…' : s;
+      };
+      const pad2 = (n) => String(n).padStart(2, '0');
+      const hhmm = (t) => {
+        const d = new Date(Number(t) || Date.now());
+        return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+      };
+
+      /** longest suffix of `seen` that is a prefix of `now` -> the chars not shown yet */
+      function newSuffix(seen, now) {
+        const a = asText(seen);
+        const b = asText(now);
+        const max = Math.min(a.length, b.length);
+        for (let k = max; k > 0; k -= 1) {
+          if (a.slice(a.length - k) === b.slice(0, k)) return b.slice(k);
+        }
+        return b;
+      }
+
+      /** cheap normal-ish noise in [-1, 1] for the sample buffers */
+      const gauss = () => (rnd() + rnd() + rnd() - 1.5) / 1.5;
+
+      const KIND_COLOR = {
+        user: '#7fd8ff',
+        assistant: '#e6ecff',
+        tool: WARN,
+        error: ERR,
+        turn: '#ffcf7a',
+        system: '#6a7285',
+      };
+
+      const prefersReduced = () => {
+        try {
+          return typeof window.matchMedia === 'function'
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        } catch {
+          return false;
+        }
+      };
+
+      /* ---------------------------------------------------------------- *
+       * shared 30fps draw loop: jobs register on mount, stop when empty
+       * ---------------------------------------------------------------- */
+
+      const jobs = new Set();
+      let rafId = 0;
+      let prev = 0;
+      let thr = 0;
+
+      function loop(now) {
+        const dt = Math.min(0.05, Math.max(0.001, (now - prev) / 1000 || 0.016));
+        prev = now;
+        if (now - thr >= FRAME_MS) {
+          thr = now;
+          jobs.forEach((fn) => {
+            try {
+              fn(dt);
+            } catch {
+              /* one bad panel must never stop the others */
+            }
+          });
+        }
+        rafId = requestAnimationFrame(loop);
+      }
+
+      function addJob(fn) {
+        jobs.add(fn);
+        if (!rafId) {
+          prev = performance.now();
+          thr = 0;
+          rafId = requestAnimationFrame(loop);
+        }
+        return () => {
+          jobs.delete(fn);
+          if (!jobs.size && rafId) {
+            cancelAnimationFrame(rafId);
+            rafId = 0;
+          }
+        };
+      }
+
+      /* ---------------------------------------------------------------- *
+       * canvas sizing: clientWidth/Height (immune to hudScale), dpr capped 2
+       * ---------------------------------------------------------------- */
+
+      function fit(c) {
+        const w = Math.max(1, Math.round(c.clientWidth || 1));
+        const hh = Math.max(1, Math.round(c.clientHeight || 1));
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const pw = Math.max(1, Math.round(w * dpr));
+        const ph = Math.max(1, Math.round(hh * dpr));
+        // only touch the backing store when it actually changed: assigning
+        // width/height reallocates the buffer and resets the whole 2D state
+        if (c.width !== pw || c.height !== ph) {
+          c.width = pw;
+          c.height = ph;
+        }
+        const x = c.getContext('2d');
+        if (!x) return null;
+        x.setTransform(dpr, 0, 0, dpr, 0, 0);
+        c.w = w;
+        c.h = hh;
+        c.x = x;
+        return c;
+      }
+
+      /** Size the canvas once and again whenever the rail is laid out/resized. */
+      function useCanvas(mount, draw) {
+        const ref = React.useRef(null);
+        React.useEffect(() => {
+          const c = ref.current;
+          if (!c) return undefined;
+          let off = null;
+          let disposed = false;
+          const start = () => {
+            if (disposed || !fit(c)) return;
+            mount(c);
+            if (prefersReduced()) draw(c, 0.016, 0);
+          };
+          start();
+          let ro = null;
+          if (typeof ResizeObserver === 'function') {
+            ro = new ResizeObserver(() => {
+              if (!disposed) start();
+            });
+            ro.observe(c);
+          }
+          if (!prefersReduced()) {
+            off = addJob((dt) => draw(c, dt, 0));
+          }
+          return () => {
+            disposed = true;
+            if (off) off();
+            if (ro) ro.disconnect();
+          };
+        }, []);
+        return ref;
+      }
+
+      /* ---------------------------------------------------------------- *
+       * panel 1: investigation feed
+       * ---------------------------------------------------------------- */
+
+      function FeedPanel(props) {
+        const live = props.live || {};
+        const view = React.useMemo(() => {
+          const source = asList(live.feed);
+          const rows = [];
+          for (let i = source.length - 1; i >= 0 && rows.length < MAX_FEED; i -= 1) {
+            const item = source[i] || {};
+            const kind = asText(item.kind || 'system').toLowerCase().replace(/[^a-z]/g, '') || 'system';
+            rows.push({
+              key: 'f' + i,
+              ts: hhmm(item.t),
+              kind,
+              color: KIND_COLOR[kind] || KIND_COLOR.system,
+              text: clip(item.text, 90),
+            });
+          }
+          // built newest-first, then flipped: the newest row must be the last child
+          // so the `:last-child` emphasis can highlight it
+          rows.reverse();
+          const tail = typeof live.recentText === 'string' ? live.recentText : '';
+          return { rows, tok: clip(tail.replace(/\s+/g, ' ').trim(), MAX_TOK) };
+        }, [live, props.liveTick]);
+
+        return h('div', { className: 'hfx-lab' },
+          h('h3', null, 'INVESTIGATION FEED'),
+          h('div', { className: 'hfx-lab-feed' },
+            view.rows.length
+              ? view.rows.map((r) => h('div', { key: r.key, className: 'hfx-lab-row' },
+                h('span', { className: 'ts' }, r.ts),
+                h('span', { className: 'kd', style: { color: r.color } }, r.kind.toUpperCase()),
+                h('span', { className: 'tx' }, r.text)))
+              : h('div', { className: 'hfx-lab-row' }, '等待会话事件')),
+          h('div', { className: 'hfx-lab-tok' },
+            h('b', null, 'TOKENS'),
+            view.tok || '—'));
+      }
+
+      /* ---------------------------------------------------------------- *
+       * panel 2: 12 agents / dispatch
+       * ---------------------------------------------------------------- */
+
+      function cellsOf(state) {
+        const out = [];
+        for (let i = 0; i < CELLS; i += 1) out.push(null);
+        if (state === 'ok') {
+          for (let i = 0; i < CELLS; i += 1) out[i] = { background: OK };
+        } else if (state === 'error') {
+          for (let i = 0; i < CELLS; i += 1) out[i] = { background: ERR };
+        } else if (state === 'running') {
+          for (let i = 0; i < 3; i += 1) out[i] = { background: WARN };
+          out[3] = { background: WARN, animation: 'hfx-lab-pulse 1s steps(2,end) infinite' };
+        }
+        return out;
+      }
+
+      const STATE_LABEL = { running: 'working', ok: 'ok', error: 'error' };
+      const STATE_CLASS = { running: 'run', ok: 'ok', error: 'err' };
+
+      function AgentsPanel(props) {
+        const live = props.live || {};
+        const rows = React.useMemo(() => {
+          const src = asList(live.tools).slice(-MAX_AGENTS);
+          const out = [];
+          for (let i = 0; i < MAX_AGENTS; i += 1) {
+            const it = src[i];
+            if (!it) {
+              out.push({ key: 'e' + i, id: pad2(i + 1), name: '--', state: 'idle', cells: cellsOf('idle') });
+              continue;
+            }
+            const state = asText(it.state || 'running').toLowerCase();
+            out.push({
+              key: 't' + i,
+              id: pad2(i + 1),
+              name: clip(it.name || it.id || '--', 14),
+              state,
+              cells: cellsOf(state),
+            });
+          }
+          return out;
+        }, [live, props.liveTick]);
+
+        return h('div', { className: 'hfx-lab' },
+          h('h3', null, '12 AGENTS / DISPATCH'),
+          h('div', { className: 'hfx-lab-agents' },
+            rows.map((r) => h('div', { key: r.key, className: 'hfx-lab-ag' },
+              h('span', { className: 'id' }, r.id),
+              h('span', { className: 'nm' }, r.name),
+              h('span', { className: 'cells' },
+                r.cells.map((style, i) => h('i', { key: i, style: style || undefined }))),
+              h('span', { className: 'st ' + (STATE_CLASS[r.state] || '') },
+                STATE_LABEL[r.state] || 'idle')))));
+      }
+
+      /* ---------------------------------------------------------------- *
+       * panel 3: advection / particle solver
+       * ---------------------------------------------------------------- */
+
+      const STAGES = ['ADVECT', 'PROJECT', 'RENDER'];
+
+      const flow = (x, y, T) => Math.sin(x * 0.035 + T * 0.6) * Math.cos(y * 0.05 - T * 0.4) * Math.PI
+        + Math.sin((x + y) * 0.01 + T * 0.2);
+
+      function drawAdv(c, P, dt, T) {
+        const x = c.x;
+        if (!x) return;
+        const w = c.w;
+        const hh = c.h;
+        // translucent clear = comet trails; the panel background shows through
+        x.fillStyle = 'rgba(14,15,18,0.22)';
+        x.fillRect(0, 0, w, hh);
+        x.fillStyle = 'rgba(120,125,135,.25)';
+        for (let i = 6; i < w; i += 12) {
+          for (let j = 6; j < hh; j += 12) x.fillRect(i, j, 1, 1);
+        }
+        x.strokeStyle = 'rgba(235,238,244,.7)';
+        x.lineWidth = 0.8;
+        x.beginPath();
+        for (const p of P) {
+          const a = flow(p.x, p.y, T);
+          const nx = p.x + Math.cos(a) * 22 * dt;
+          const ny = p.y + Math.sin(a) * 22 * dt;
+          x.moveTo(p.x, p.y);
+          x.lineTo(nx + Math.cos(a) * 2, ny + Math.sin(a) * 2);
+          p.x = nx;
+          p.y = ny;
+          p.l -= dt;
+          if (p.l < 0 || p.x < 0 || p.x > w || p.y < 0 || p.y > hh) {
+            p.x = rnd() * w;
+            p.y = rnd() * hh;
+            p.l = rr(1, 4);
+          }
+        }
+        x.stroke();
+      }
+
+      function AdvPanel() {
+        const chips = React.useRef(null);
+        let T = 0;
+        let P = [];
+        const mount = (c) => {
+          P = [];
+          for (let i = 0; i < PARTICLES; i += 1) {
+            P.push({ x: rnd() * c.w, y: rnd() * c.h, l: rr(1, 4) });
+          }
+          T = 0;
+        };
+        const ref = useCanvas(mount, (c, dt, t0) => {
+          T += dt || t0;
+          drawAdv(c, P, dt || 0.016, T);
+        });
+
+        React.useEffect(() => {
+          if (prefersReduced()) return undefined;
+          const host = chips.current;
+          if (!host) return undefined;
+          const els = Array.prototype.slice.call(host.children);
+          if (els.length < 2) return undefined;
+          let k = 0;
+          const id = window.setInterval(() => {
+            k = (k + 1) % els.length;
+            for (let i = 0; i < els.length; i += 1) {
+              if (i === k) els[i].classList.add('on');
+              else els[i].classList.remove('on');
+            }
+          }, 1400);
+          return () => window.clearInterval(id);
+        }, []);
+
+        return h('div', { className: 'hfx-lab' },
+          h('h3', null, 'ADVECTION / PARTICLE SOLVER'),
+          h('canvas', { ref }),
+          h('div', { className: 'hfx-lab-chips', ref: chips },
+            STAGES.map((name, i) => h('span', { key: name, className: i === 0 ? 'on' : undefined }, name))));
+      }
+
+      /* ---------------------------------------------------------------- *
+       * panel 4: method / reference index
+       * ---------------------------------------------------------------- */
+
+      function drawIdx(c, IDX, T) {
+        const x = c.x;
+        if (!x) return;
+        const w = c.w;
+        const hh = c.h;
+        x.clearRect(0, 0, w, hh);
+        x.font = '600 6.5px ' + FONT;
+        x.textBaseline = 'middle';
+        const lx = 24;
+        const rx = 34;
+        const cw = Math.max(1, (w - lx - rx) / IDX_COLS);
+        const ch = hh / IDX_ROWS;
+        const scan = Math.floor((T * 6) % IDX_COLS);
+        // the index "warms up" over time: one cell per frame drifts brighter
+        if (rnd() < 0.3) IDX[(rnd() * IDX_ROWS) | 0][(rnd() * IDX_COLS) | 0] = rnd();
+        for (let j = 0; j < IDX_ROWS; j += 1) {
+          x.fillStyle = '#6b6f78';
+          x.fillText('M' + pad2(j + 1), 0, j * ch + ch / 2);
+          let match = 0;
+          for (let i = 0; i < IDX_COLS; i += 1) {
+            const v = IDX[j][i];
+            x.fillStyle = v > 0.86 ? PINK : v > 0.7 ? 'rgba(240,166,198,.45)' : v > 0.4 ? '#4a4e56' : '#1c1e23';
+            if (i === scan) x.fillStyle = v > 0.4 ? '#ffffff' : '#3a3e46';
+            x.fillRect(lx + i * cw, j * ch + 1, Math.max(1, cw - 1), Math.max(1, ch - 2));
+            if (v > 0.7) match += 1;
+          }
+          x.fillStyle = match > 7 ? PINK : '#9a9ea7';
+          x.fillText(match > 7 ? 'review' : 'match', w - rx + 4, j * ch + ch / 2);
+        }
+      }
+
+      function IndexPanel() {
+        let IDX = [];
+        let T = 0;
+        const mount = () => {
+          IDX = [];
+          for (let j = 0; j < IDX_ROWS; j += 1) {
+            const row = [];
+            for (let i = 0; i < IDX_COLS; i += 1) row.push(rnd());
+            IDX.push(row);
+          }
+          T = 0;
+        };
+        const ref = useCanvas(mount, (c, dt) => {
+          T += dt;
+          drawIdx(c, IDX, T);
+        });
+        return h('div', { className: 'hfx-lab' },
+          h('h3', null, 'METHOD / REFERENCE INDEX'),
+          h('canvas', { ref }));
+      }
+
+      /* ---------------------------------------------------------------- *
+       * panel: method workspace (live typewriter over the streaming tail)
+       * ---------------------------------------------------------------- */
+
+      /** the streaming tail is a moving window: only replay the part never shown */
+      function WorkspacePanel(props) {
+        const liveRef = React.useRef(props.live || {});
+        liveRef.current = props.live || {};
+        const cursor = React.useRef({ seen: '', next: 1 });
+        // start empty: the first typed row must claim n = 1 from the cursor,
+        // otherwise a pre-seeded row collides with it and "01" shows up twice
+        const [rows, setRows] = React.useState(() => []);
+
+        React.useEffect(() => {
+          const st = cursor.current;
+          const id = window.setInterval(() => {
+            const live = liveRef.current || {};
+            const now = typeof live.recentText === 'string' ? live.recentText : '';
+            const delta = newSuffix(st.seen, now);
+            if (!delta) return; // nothing real to show: never invent text
+            const take = delta.slice(0, 2 + ((rnd() * 3) | 0));
+            st.seen = (st.seen + take).slice(-400);
+            setRows((prev) => {
+              const out = prev.length ? prev.map((r) => ({ n: r.n, text: r.text })) : [];
+              let open = out.length ? out[out.length - 1] : null;
+              for (let i = 0; i < take.length; i += 1) {
+                const ch = take.charAt(i);
+                if (!open) {
+                  open = { n: st.next, text: '' };
+                  st.next += 1;
+                  out.push(open);
+                }
+                if (ch === '\n' || ch === '\r') {
+                  open = { n: st.next, text: '' };
+                  st.next += 1;
+                  out.push(open);
+                  continue;
+                }
+                open.text += ch;
+                if (open.text.length >= CODE_WRAP || /[。！？；.!?;]/.test(ch)) {
+                  open = { n: st.next, text: '' };
+                  st.next += 1;
+                  out.push(open);
+                }
+              }
+              return out.slice(-MAX_CODE);
+            });
+          }, CODE_TICK);
+          return () => window.clearInterval(id);
+        }, []);
+
+        const shown = rows.length ? rows : [{ n: 1, text: '' }];
+        return h('div', { className: 'hfx-lab' },
+          h('h3', null, 'METHOD WORKSPACE'),
+          h('div', { className: 'hfx-lab-code' },
+            shown.map((r, i) => h('div', { key: r.n },
+              h('span', { className: 'ln' }, pad2(r.n)),
+              h('span', { className: 'tx' }, r.text,
+                i === shown.length - 1 ? h('span', { className: 'caret' }) : null)))));
+      }
+
+      /* ---------------------------------------------------------------- *
+       * panel: source / extraction routes (illustrative 6 x 3 matrix)
+       * ---------------------------------------------------------------- */
+
+      function initRoutes() {
+        const out = [];
+        for (let i = 0; i < ROUTE_ROWS.length; i += 1) {
+          const row = [];
+          for (let j = 0; j < ROUTE_COLS.length; j += 1) row.push(rnd() < 0.45 ? 2 : rnd() < 0.55 ? 1 : 0);
+          out.push(row);
+        }
+        return out;
+      }
+
+      function RoutesPanel() {
+        const [grid, setGrid] = React.useState(initRoutes);
+        React.useEffect(() => {
+          if (prefersReduced()) return undefined;
+          const id = window.setInterval(() => {
+            setGrid((prev) => {
+              const next = prev.map((row) => row.slice());
+              const r = (rnd() * next.length) | 0;
+              const c = (rnd() * next[r].length) | 0;
+              next[r][c] = (next[r][c] + 1) % 3;
+              return next;
+            });
+          }, 500);
+          return () => window.clearInterval(id);
+        }, []);
+
+        return h('div', { className: 'hfx-lab' },
+          h('h3', null, 'SOURCE / EXTRACTION ROUTES'),
+          h('div', { className: 'hfx-lab-routes' },
+            h('span', { className: 'hd' }, 'route'),
+            ROUTE_COLS.map((c) => h('span', { key: 'h' + c, className: 'hd' }, c)),
+            ROUTE_ROWS.map((name, i) => h(React.Fragment, { key: name },
+              h('span', { className: 'nm' }, name),
+              ROUTE_COLS.map((c, j) => h('span', {
+                key: name + ':' + c,
+                className: 'mk s' + (grid[i] ? grid[i][j] : 0),
+              }, ROUTE_MARK[grid[i] ? grid[i][j] : 0]))))),
+          h('div', { className: 'cap' }, 'illustrative'));
+      }
+
+      /* ---------------------------------------------------------------- *
+       * dock panel: validation / sample buffer
+       * ---------------------------------------------------------------- */
+
+      function drawVal(c, B, T) {
+        const x = c.x;
+        if (!x || !B.length) return;
+        const w = c.w;
+        const hh = c.h;
+        x.clearRect(0, 0, w, hh);
+        const gutter = 30;
+        const lane = hh / B.length;
+        const plotX = gutter + 2;
+        const plotW = Math.max(8, w - plotX - 2);
+        x.font = '600 6px ' + FONT;
+        x.textBaseline = 'middle';
+        for (let k = 0; k < B.length; k += 1) {
+          const top = lane * k;
+          x.fillStyle = '#6b6f78';
+          x.fillText(VAL_LABELS[k] || 'L' + k, 0, top + lane / 2);
+          x.strokeStyle = 'rgba(58,62,70,.5)';
+          x.lineWidth = 1;
+          x.beginPath();
+          x.moveTo(plotX, top + lane - 1.5);
+          x.lineTo(plotX + plotW, top + lane - 1.5);
+          x.stroke();
+          const data = B[k];
+          const n = data.length;
+          const peak = data[n - 1] > 0.82;
+          x.strokeStyle = peak ? PINK : '#e6e8ec';
+          x.lineWidth = 0.9;
+          x.beginPath();
+          for (let i = 0; i < n; i += 1) {
+            const px = plotX + (i / (n - 1 || 1)) * plotW;
+            const py = top + lane - 3 - data[i] * (lane - 6);
+            if (i) x.lineTo(px, py);
+            else x.moveTo(px, py);
+          }
+          x.stroke();
+        }
+        // pink cursor sweeping the buffer
+        const cx = plotX + ((T * 0.22) % 1) * plotW;
+        x.globalAlpha = 0.55;
+        x.strokeStyle = PINK;
+        x.lineWidth = 1;
+        x.beginPath();
+        x.moveTo(cx, 0);
+        x.lineTo(cx, hh);
+        x.stroke();
+        x.globalAlpha = 1;
+      }
+
+      function ValPanel() {
+        let B = [];
+        let T = 0;
+        const mount = () => {
+          B = [];
+          for (let k = 0; k < VAL_LABELS.length; k += 1) {
+            const arr = [];
+            for (let i = 0; i < VAL_POINTS; i += 1) {
+              arr.push(0.5 + gauss() * 0.12 + Math.sin(i * 0.05 + k) * 0.18);
+            }
+            B.push(arr);
+          }
+          T = 0;
+        };
+        const ref = useCanvas(mount, (c, dt) => {
+          T += dt;
+          if (!B.length) return;
+          for (let k = 0; k < B.length; k += 1) {
+            const arr = B[k];
+            arr.shift();
+            arr.push(Math.max(0.02, Math.min(0.98,
+              0.5 + gauss() * 0.16 + Math.sin(T * (1.4 + k * 0.7)) * 0.22)));
+          }
+          drawVal(c, B, T);
+        });
+        return h('div', { className: 'hfx-lab' },
+          h('h3', null, 'VALIDATION / SAMPLE BUFFER'),
+          h('canvas', { ref }),
+          h('div', { className: 'cap' }, 'illustrative'));
+      }
+
+      /* ---------------------------------------------------------------- *
+       * dock panel: scene / difference field
+       * ---------------------------------------------------------------- */
+
+      function drawDiff(c, D, T) {
+        const x = c.x;
+        if (!x || !D) return;
+        const w = c.w;
+        const hh = c.h;
+        x.clearRect(0, 0, w, hh);
+        const histH = Math.max(8, Math.round(hh * 0.24));
+        const titleH = 8;
+        const gh = Math.max(6, hh - histH - titleH - 2);
+        const gap = 6;
+        const gridW = (w - gap) / 2;
+        const cw = gridW / DIFF_COLS;
+        const ch = gh / DIFF_ROWS;
+        // the error blob drifts: same input, local delta
+        const bx = (0.5 + 0.42 * Math.sin(T * 0.55)) * DIFF_COLS;
+        const by = (0.5 + 0.38 * Math.cos(T * 0.41)) * DIFF_ROWS;
+        x.font = '600 5.5px ' + FONT;
+        x.textBaseline = 'top';
+        for (let side = 0; side < 2; side += 1) {
+          const ox = side * (gridW + gap);
+          x.fillStyle = '#6b6f78';
+          x.fillText(side ? 'IMPLEMENTATION' : 'REFERENCE', ox, 0);
+          for (let j = 0; j < DIFF_ROWS; j += 1) {
+            for (let i = 0; i < DIFF_COLS; i += 1) {
+              const base = D.g[j][i];
+              let v = base;
+              let err = 0;
+              if (side === 1) {
+                const dx = i - bx;
+                const dy = j - by;
+                err = Math.exp(-(dx * dx) / 9 - (dy * dy) / 6);
+                v = Math.min(1, base + err * 0.55);
+              }
+              x.fillStyle = side === 1 && err > 0.35
+                ? PINK
+                : 'rgba(230,232,236,' + (0.06 + v * 0.5).toFixed(2) + ')';
+              x.fillRect(ox + i * cw + 0.5, titleH + 1 + j * ch,
+                Math.max(1, cw - 1), Math.max(1, ch - 1));
+            }
+          }
+        }
+        const hw = w / HIST_BARS;
+        for (let i = 0; i < HIST_BARS; i += 1) {
+          const v = D.hist[i] || 0;
+          const bh = Math.max(1, v * (histH - 3));
+          x.fillStyle = i === HIST_BARS - 1 ? PINK : 'rgba(230,232,236,.3)';
+          x.fillRect(i * hw + 0.5, hh - bh, Math.max(1, hw - 1.5), bh);
+        }
+      }
+
+      function DiffPanel() {
+        let D = null;
+        let T = 0;
+        const mount = () => {
+          const g = [];
+          for (let j = 0; j < DIFF_ROWS; j += 1) {
+            const row = [];
+            for (let i = 0; i < DIFF_COLS; i += 1) row.push(0.25 + rnd() * 0.55);
+            g.push(row);
+          }
+          const hist = [];
+          for (let i = 0; i < HIST_BARS; i += 1) hist.push(rnd() * 0.8);
+          D = { g, hist };
+          T = 0;
+        };
+        const ref = useCanvas(mount, (c, dt) => {
+          T += dt;
+          if (!D) return;
+          for (let i = 0; i < HIST_BARS; i += 1) {
+            D.hist[i] = Math.max(0.05, Math.min(1, D.hist[i] + gauss() * 0.05));
+          }
+          drawDiff(c, D, T);
+        });
+        return h('div', { className: 'hfx-lab' },
+          h('h3', null, 'SCENE / DIFFERENCE FIELD'),
+          h('canvas', { ref }),
+          h('div', { className: 'cap' }, 'same input · local delta · illustrative'));
+      }
+
+      /* ---------------------------------------------------------------- *
+       * rack (right rail, 5 rows by default) and dock (bottom right, 2 rows)
+       *
+       * ADVECTION / PARTICLE SOLVER is off unless advOn=1: it reached up over the
+       * session toolbar. mount.js sizes the rail grid from the same switches
+       * (--hfx-rack-rows), so always gate both in step.
+       * ---------------------------------------------------------------- */
+
+      function Rack(props) {
+        const params = props.params || {};
+        const rawFeed = params.feedOn == null ? 1 : params.feedOn;
+        const showFeed = Number(rawFeed) >= 0.5;
+        const showAdv = Number(params.advOn) >= 0.5;
+        return h(React.Fragment, null,
+          showAdv ? h(AdvPanel, props) : null,
+          showFeed ? h(FeedPanel, props) : null,
+          h(AgentsPanel, props),
+          h(WorkspacePanel, props),
+          h(RoutesPanel, props),
+          h(IndexPanel, props));
+      }
+
+      function Dock(props) {
+        return h(React.Fragment, null,
+          h(ValPanel, props),
+          h(DiffPanel, props));
+      }
+
+      return { Rack, Dock };
+    })();
+
     /* ================= src/hud.js ================= */
     /**
      * HALOFLUX for DSH — HUD overlay (React, no JSX, no imports).
@@ -3621,7 +4385,8 @@ window.__ModuleLoader__.load({
         fieldBright: 1, guardBlur: 0, motionQuiet: 0, readFade: 0,
         tintAmount: 0, tintHue: 210, tintSat: 1.6, tintFollow: 0,
         ctxArc: 1, toolBeam: 1, errFx: 0, glitchAmt: 0.6, stepTicks: 1,
-        hudScale: 1, hudInset: 12, hudTop: 6,
+        hudScale: 1, hudInset: 12, hudTop: 6, hudTopPad: 44, hudRailW: 0, hudReserve: 220, labOn: 1,
+        advOn: 0, hudAutoHide: 1, statsOn: 1,
         phaseRing: 1, errPin: 1, tpsRibbon: 1, thinkPulse: 1,
         glowBlurSmall: 1, adaptQuality: 1, idleSleepMs: 0, hudFadeMs: 0,
       };
@@ -3797,7 +4562,7 @@ window.__ModuleLoader__.load({
       const CSS_STATS = `
     .hfx-stats{position:absolute;top:var(--hfx-hud-top,6px);left:var(--hfx-hud-x,50%);transform:translateX(-50%);display:flex;align-items:center;gap:10px;
       max-width:calc(100vw - 320px);overflow:hidden;padding:4px 9px;border-radius:8px;box-sizing:border-box;
-      pointer-events:none;contain:layout style;
+      pointer-events:none;contain:layout style;-webkit-app-region:no-drag;
       font:11px/1.3 ${FONT_STACK};letter-spacing:.06em;color:${T_LABEL_2};
       background:color-mix(in srgb,var(--dsw-alias-bg-base,#0b0d10) var(--hfx-plate,72%),transparent);
       border:1px solid color-mix(in srgb,var(--dsw-alias-border-l2,#2a2f3a) 70%,transparent);
@@ -3807,6 +4572,7 @@ window.__ModuleLoader__.load({
     .hfx-stats .hfx-v{font-variant-numeric:tabular-nums;color:${T_LABEL_1};white-space:nowrap}
     .hfx-stats .hfx-state{font-weight:700;letter-spacing:.14em;white-space:nowrap;color:${T_LABEL_3}}
     .hfx-stats .hfx-state-run{color:${T_WARN}}
+    .hfx-stats .hfx-state-warn{color:${T_ERR}}
     .hfx-stats .hfx-dot{width:6px;height:6px;border-radius:50%;flex:none;display:inline-block;background:${T_LABEL_3}}
     .hfx-stats .hfx-dot-run{background:${T_WARN};animation:hfx-pulse 1.15s ease-in-out infinite}
     .hfx-stats .hfx-gear{pointer-events:auto;flex:none;width:20px;height:18px;line-height:1;font:inherit;font-size:11px;
@@ -3831,6 +4597,17 @@ window.__ModuleLoader__.load({
         const t = safeT(props);
         const live = props.live || {};
         const cameraOn = Number((props.params || {}).camera) >= 0.5;
+        // engine diagnostics: a parked loop, a missing engine or a void presence is the
+        // only way the frame renders nothing while the HUD still draws, so say it out
+        // loud instead of leaving the user staring at a black halo.
+        const diag = props.diag || null;
+        const diagLabel = !diag ? ''
+          : diag.missing ? 'NOENG'
+          : (diag.w < 40 || diag.h < 40) ? 'SIZE0'
+          : !diag.loop ? 'PARKED'
+          : !diag.present ? 'VOID'
+          : diag.target < 0.02 ? 'DIM 0'
+          : diag.asleep ? 'ASLEEP' : '';
         const view = React.useMemo(() => ({
           running: live.running === true,
           total: fmtCount(live.totalTokens),
@@ -3845,6 +4622,10 @@ window.__ModuleLoader__.load({
           h('span', { className: 'hfx-dot' + (view.running ? ' hfx-dot-run' : ''), 'aria-hidden': 'true' }),
           h('span', { className: 'hfx-state' + (view.running ? ' hfx-state-run' : '') },
             t(view.running ? 'ui.running' : 'ui.idle')),
+          diagLabel ? h('span', {
+            className: 'hfx-state hfx-state-warn',
+            title: 'haloflux engine: loop / presence / level',
+          }, diagLabel) : null,
           h(Kpi, { label: t('ui.tokens'), value: view.total, w: 56 }),
           h(Kpi, { label: t('ui.rate'), value: view.rate, w: 56 }),
           h(Kpi, { label: t('ui.context'), value: view.ctx, w: 56 }),
@@ -3872,7 +4653,7 @@ window.__ModuleLoader__.load({
        * ------------------------------------------------------------------ */
 
       const CSS_FEED = `
-    .hfx-feed{position:absolute;left:var(--hfx-hud-inset,12px);bottom:var(--hfx-hud-inset,12px);width:302px;pointer-events:none;
+    .hfx-feed{width:100%;pointer-events:none;box-sizing:border-box;
       display:flex;flex-direction:column;gap:6px;contain:layout style;
       font:11px/1.45 ${FONT_STACK};letter-spacing:.06em;color:${T_LABEL_2}}
     .hfx-pane{box-sizing:border-box;padding:5px 8px 6px;border-radius:8px;
@@ -3939,7 +4720,7 @@ window.__ModuleLoader__.load({
        * ------------------------------------------------------------------ */
 
       const CSS_TOOLS = `
-    .hfx-tools{position:absolute;right:var(--hfx-hud-inset,12px);bottom:var(--hfx-hud-inset,12px);width:252px;pointer-events:none;box-sizing:border-box;
+    .hfx-tools{width:100%;pointer-events:none;box-sizing:border-box;
       padding:5px 8px 6px;border-radius:8px;contain:layout style;
       font:11px/1.45 ${FONT_STACK};letter-spacing:.06em;color:${T_LABEL_2};
       background:color-mix(in srgb,var(--dsw-alias-bg-base,#0b0d10) var(--hfx-plate,72%),transparent);
@@ -3995,9 +4776,10 @@ window.__ModuleLoader__.load({
        * ------------------------------------------------------------------ */
 
       const CSS_CONSOLE = `
-    .hfx-console{position:absolute;top:var(--hfx-hud-top,8px);right:var(--hfx-hud-inset,12px);width:380px;max-width:calc(100vw - 24px);
-      max-height:76vh;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;
-      pointer-events:auto;border-radius:10px;contain:layout style;
+    .hfx-console{position:absolute;top:calc(var(--dsh-frame-chrome-top,0px) + var(--hfx-hud-top,8px));right:var(--hfx-hud-inset,12px);width:380px;max-width:calc(100vw - 24px);
+      max-height:calc(100% - var(--dsh-frame-chrome-top,0px) - var(--hfx-hud-top,8px) - var(--hfx-hud-reserve,220px));
+      display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;
+      pointer-events:auto;border-radius:10px;contain:layout style;-webkit-app-region:no-drag;z-index:3;
       font:11px/1.45 ${FONT_STACK};letter-spacing:.06em;color:${T_LABEL_2};
       background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#0e0f12) 88%,transparent);
       border:1px solid color-mix(in srgb,var(--dsw-alias-border-l3,#3a3e46) 78%,transparent);
@@ -4693,19 +5475,103 @@ window.__ModuleLoader__.load({
 
       const BASE_CSS = `
     .hfx-root{position:absolute;inset:0;pointer-events:none;z-index:0;isolation:auto}
+    /* host for the sunk HUD: a child of .mP3x-q_frame, just before shell.overlay (z 20).
+       z 1 puts it above the transcript but below dialogs / floating windows / composer. */
+    .hfx-portal{position:absolute;inset:0;pointer-events:none;z-index:1;overflow:visible}
     .hfx-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none}
     .hfx-hud{position:absolute;inset:0;pointer-events:none;font:11px/1.45 "JetBrains Mono",Consolas,ui-monospace,monospace;
       letter-spacing:.06em;color:var(--dsw-alias-label-secondary,#8b93a7);user-select:none}
     .hfx-panel{pointer-events:auto;background:color-mix(in srgb,var(--dsw-alias-bg-base,#0b0d10) 82%,transparent);
       border:1px solid color-mix(in srgb,var(--dsw-alias-border-l2,#2a2f3a) 70%,transparent);
       border-radius:10px;backdrop-filter:blur(10px)}
+    /* top safety line: the rail never rises above the session toolbar. --hfx-hud-top-pad
+       is the toolbar allowance on top of the window chrome (hudTopPad, default 44). */
+    .hfx-rail{position:absolute;right:var(--hfx-hud-inset,12px);
+      top:calc(var(--dsh-frame-chrome-top,0px) + var(--hfx-hud-top,6px) + var(--hfx-hud-top-pad,44px));
+      bottom:calc(var(--hfx-hud-reserve,220px) + 8px);
+      width:var(--hfx-hud-rail-w,clamp(240px,20vw,320px));
+      display:flex;flex-direction:column;justify-content:center;justify-content:safe center;gap:8px;
+      box-sizing:border-box;pointer-events:none;z-index:1;overflow:hidden}
+    .hfx-rail>*{pointer-events:auto;width:100%}
+    /* ---- lab rack: six stacked panels sharing the rail height (src/lab.js) ----
+       the rail itself becomes the grid (class "hfx-rail hfx-rack"), so it must NOT
+       get height:100%: with top and bottom both set, a height would win over the
+       bottom offset and push the rack 228px past the window. 1fr rows resolve
+       against the height implied by top/bottom. */
+    .hfx-rack{display:grid;grid-template-columns:1fr;
+      grid-template-rows:repeat(var(--hfx-rack-rows,5),minmax(0,1fr));
+      gap:8px;align-content:stretch}
+    .hfx-rail>.hfx-lab{pointer-events:none}
+    /* ---- lab dock: two panels bottom-right, under the whale widget ---- */
+    .hfx-dock{position:absolute;right:var(--hfx-hud-inset,12px);bottom:12px;
+      width:var(--hfx-hud-rail-w,clamp(240px,20vw,320px));
+      height:clamp(170px,19.5vh,210px);
+      display:grid;grid-template-columns:1fr;grid-template-rows:repeat(2,minmax(0,1fr));gap:8px;
+      box-sizing:border-box;pointer-events:none;z-index:1;
+      transform-origin:right bottom;scale:var(--hfx-hud-scale,1)}
+    /* the dock sits over the composer: it must never swallow a click */
+    .hfx-dock,.hfx-dock *{pointer-events:none}
+    @media (max-height:820px){.hfx-dock{display:none}}
+    /* auto-hide: a context / wallpaper / canvas page carries no composer, and a modal
+       owns the screen anyway. The right rail + dock retreat; the top Stats stay. */
+    .hfx-root[data-hfx-dim="1"] .hfx-rail,
+    .hfx-root[data-hfx-dim="1"] .hfx-dock{opacity:0;visibility:hidden;transition:opacity .18s ease,visibility 0s linear .18s}
+    .hfx-root .hfx-rail,
+    .hfx-root .hfx-dock{transition:opacity .15s ease}
+    .hfx-lab{display:flex;flex-direction:column;min-width:0;overflow:hidden;box-sizing:border-box;padding:7px 9px 6px;
+      border-radius:2px;border:1px solid color-mix(in srgb,var(--dsw-alias-border-l2,#2a2f3a) 78%,transparent);
+      background:color-mix(in srgb,var(--dsw-alias-bg-base,#0b0d10) 84%,transparent);
+      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+      font:9px/1.42 "JetBrains Mono",Consolas,ui-monospace,monospace;letter-spacing:.04em;
+      color:var(--dsw-alias-label-secondary,#8b93a7)}
+    .hfx-lab h3{margin:0 0 5px;font-size:9px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase;
+      color:var(--dsw-alias-label-primary,#f4f5f7);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .hfx-lab .cap{margin-top:auto;font-size:8px;color:var(--dsw-alias-label-tertiary,#6a7285);padding-top:3px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .hfx-lab canvas{width:100%;flex:1;min-height:0;display:block}
+    .hfx-lab-feed{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden}
+    .hfx-lab-row{display:flex;gap:6px;white-space:nowrap;min-width:0;color:#6a7285}
+    .hfx-lab-row:last-child{color:#f4f5f7;font-weight:600}
+    .hfx-lab-row .ts{flex:none;color:#565d69;font-variant-numeric:tabular-nums}
+    .hfx-lab-row .kd{flex:none;width:52px;font-weight:800;overflow:hidden;text-overflow:ellipsis}
+    .hfx-lab-row .tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+    .hfx-lab-tok{margin-top:4px;padding-top:3px;border-top:1px solid rgba(37,40,46,.7);font-size:8px;color:#8b93a7;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .hfx-lab-tok b{color:#6a7285;font-weight:600;margin-right:5px;letter-spacing:.1em}
+    .hfx-lab-agents{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;align-content:start;overflow:hidden}
+    .hfx-lab-ag{display:flex;align-items:center;gap:5px;white-space:nowrap;min-width:0}
+    .hfx-lab-ag .id{color:#3f434a;flex:none}
+    .hfx-lab-ag .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;color:#8b93a7}
+    .hfx-lab-ag .cells{display:flex;gap:1px;flex:none}
+    .hfx-lab-ag .cells i{width:6px;height:6px;background:#1d1f24;display:block}
+    .hfx-lab-ag .st{flex:none;width:34px;color:#6a7285;overflow:hidden;text-overflow:ellipsis}
+    .hfx-lab-ag .st.run{color:#ffb648}.hfx-lab-ag .st.ok{color:#7ddc9a}.hfx-lab-ag .st.err{color:#f08a8a}
+    .hfx-lab-chips{display:flex;gap:4px;margin-top:4px}
+    .hfx-lab-chips span{flex:1;text-align:center;font-size:8px;border:1px solid rgba(58,62,70,.7);padding:1px 4px;color:#6a7285}
+    .hfx-lab-chips span.on{background:#cfd2d8;color:#000;border-color:#cfd2d8}
+    /* METHOD WORKSPACE: typewriter over the streaming tail */
+    .hfx-lab-code{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;
+      font:9px/1.5 "JetBrains Mono",Consolas,ui-monospace,monospace;color:#c9ccd4}
+    .hfx-lab-code div{display:flex;gap:6px;white-space:nowrap;min-width:0}
+    .hfx-lab-code .ln{color:#3f434a;flex:none;font-variant-numeric:tabular-nums}
+    .hfx-lab-code .tx{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+    .hfx-lab-code .caret{display:inline-block;width:5px;height:9px;background:#cfd2d8;
+      vertical-align:-1px;animation:hfx-lab-pulse 1s steps(1) infinite}
+    /* SOURCE / EXTRACTION ROUTES */
+    .hfx-lab-routes{flex:1;min-height:0;display:grid;grid-template-columns:1.2fr repeat(3,1fr);
+      row-gap:3px;column-gap:4px;align-content:start;font-size:8px;overflow:hidden}
+    .hfx-lab-routes .hd{color:#6a7285;font-size:7px;letter-spacing:.6px;white-space:nowrap;overflow:hidden}
+    .hfx-lab-routes .nm{color:#8b93a7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .hfx-lab-routes .mk{text-align:center;color:#3a3e46;letter-spacing:-1px;white-space:nowrap}
+    .hfx-lab-routes .mk.s1{color:#ffb648}
+    .hfx-lab-routes .mk.s2{color:#98e0cf}
+    @keyframes hfx-lab-pulse{50%{opacity:.25}}
     .hfx-dim{color:var(--dsw-alias-label-tertiary,#6a7285)}
     .hfx-num{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#e6ecff)}
     .hfx-pink{color:#ff9ecb}.hfx-cyan{color:#7fd8ff}
     /* HUD scale: the individual 'scale' property keeps the corner anchors (transform is used for centring) */
     .hfx-stats{transform-origin:top center;scale:var(--hfx-hud-scale,1)}
-    .hfx-feed{transform-origin:bottom left;scale:var(--hfx-hud-scale,1)}
-    .hfx-tools{transform-origin:bottom right;scale:var(--hfx-hud-scale,1)}
+    .hfx-rail{transform-origin:right center;scale:var(--hfx-hud-scale,1)}
     .hfx-console{transform-origin:top right;scale:var(--hfx-hud-scale,1)}
     `;
 
@@ -4782,6 +5648,88 @@ window.__ModuleLoader__.load({
         return !!(row && row.blank === true);
       };
 
+      /* ---------- portal host: sink the HUD below dialogs ---------- */
+
+      // react-dom comes from the same loader factory as react. When it is missing the
+      // HUD still renders in shell.overlay (the old behaviour), it just is not sunk.
+      let ReactDOM = null;
+      try {
+        if (typeof require === 'function') ReactDOM = require('react-dom');
+      } catch {
+        ReactDOM = null;
+      }
+      const createPortal = ReactDOM && typeof ReactDOM.createPortal === 'function'
+        ? ReactDOM.createPortal.bind(ReactDOM)
+        : null;
+
+      const PORTAL_TRIES = 40;      // the shell frame can appear a frame after the slot
+      const PORTAL_TRIES_MS = 50;
+
+      /** the frame's portal host, created once and reused across re-renders / reloads */
+      function findHostEl() {
+        if (typeof document === 'undefined' || !document) return null;
+        const overlay = document.querySelector('[data-shell-overlay]');
+        const frame = document.querySelector('.mP3x-q_frame')
+          || (overlay && overlay.parentElement)
+          || null;
+        if (!frame) return null;
+        for (let i = 0; i < frame.children.length; i += 1) {
+          const c = frame.children[i];
+          if (c && c.classList && c.classList.contains('hfx-portal')) return c;
+        }
+        const el = document.createElement('div');
+        el.className = 'hfx-portal';
+        el.setAttribute('data-haloflux-portal', '');
+        frame.insertBefore(el, overlay && overlay.parentElement === frame ? overlay : null);
+        return el;
+      }
+
+      /**
+       * Renders the HUD into a host div inside the shell frame, immediately before
+       * shell.overlay (z 20). The host sits at z 1: above the transcript, below
+       * dialogs / floating windows / the composer, and below DSH's own overlays.
+       *
+       * A portal is required instead of moving the node: React unmounts through the
+       * parent it recorded, and a moved child throws NotFoundError. If the frame
+       * never shows up the HUD falls back to rendering in shell.overlay (the old
+       * layer), so a layout change upstream degrades instead of hiding the HUD.
+       */
+      function SinkHost(props) {
+        const [host, setHost] = React.useState(() => (createPortal ? findHostEl() : null));
+        const [failed, setFailed] = React.useState(false);
+
+        React.useEffect(() => {
+          if (!createPortal || host) return undefined;
+          let tries = 0;
+          let timer = 0;
+          let stopped = false;
+          const attach = () => {
+            if (stopped) return;
+            const el = findHostEl();
+            if (el) {
+              stopped = true;
+              setHost(el);
+              return;
+            }
+            tries += 1;
+            if (tries < PORTAL_TRIES) {
+              timer = window.setTimeout(attach, PORTAL_TRIES_MS);
+            } else {
+              setFailed(true);
+            }
+          };
+          attach();
+          return () => {
+            stopped = true;
+            if (timer) window.clearTimeout(timer);
+          };
+        }, [host]);
+
+        if (failed || !createPortal) return props.children;
+        if (!host) return null;
+        return createPortal(props.children, host);
+      }
+
       /* ---------- the layer ---------- */
 
       function HalofluxLayer(props) {
@@ -4819,6 +5767,12 @@ window.__ModuleLoader__.load({
         const [stats, setStats] = React.useState(null);
         const [liveTick, setLiveTick] = React.useState(0);
         const [reading, setReading] = React.useState(false);
+        /** the rail + dock retreat on pages without a composer (context / wallpaper) and
+            while a modal owns the screen; the top Stats are never touched by this */
+        const [dim, setDim] = React.useState(false);
+        /** forces a re-render while the engine is missing/parked, so the HUD badge
+            (Stats) can show WHY the frame is black instead of just looking broken */
+        const [diagTick, setDiagTick] = React.useState(0);
         /** last time a HUD tick was pushed (hudFadeMs throttling) */
         const lastHudPush = React.useRef(0);
 
@@ -4898,21 +5852,83 @@ window.__ModuleLoader__.load({
           // eslint-disable-next-line react-hooks/exhaustive-deps
         }, []);
 
-        /* engine lifecycle */
+        /* latest params for a late engine boot (the engine effect below runs once) */
+        const paramsRef = React.useRef(params);
+        paramsRef.current = params;
+
+        /* engine lifecycle. The canvas lives inside the sunk portal, and SinkHost only
+           mounts its children once the shell frame is found (it starts from a null host
+           and retries for up to 2s). So a missing canvas is a TIMING state, not a fatal
+           one: a one-shot effect here used to bail out and never create the engine, which
+           left the HUD (mounted later, plain DOM) visible over a permanently black canvas.
+           boot() is idempotent and re-binds if React ever swaps the canvas element. */
+        const engineBootRef = React.useRef(null);
         React.useEffect(() => {
-          const canvas = canvasRef.current;
-          if (!canvas || !liveRef.current) return undefined;
-          const engine = HalofluxEngine.create({
-            canvas,
-            canvas2: canvas2Ref.current,
-            live: liveRef.current,
-            params,
-            onStats: setStats,
-          });
-          engineRef.current = engine;
-          engine.start();
-          return () => { engineRef.current = null; engine.dispose(); };
-          // eslint-disable-next-line react-hooks/exhaustive-deps
+          let disposed = false;
+          let timer = 0;
+          let booted = null;
+          let bound = null;
+          const boot = () => {
+            timer = 0;
+            if (disposed) return;
+            const canvas = canvasRef.current;
+            const live = liveRef.current;
+            if (!canvas || typeof canvas.getContext !== 'function' || !live) {
+              if (!timer) timer = window.setTimeout(boot, 60);
+              return;
+            }
+            if (booted && bound === canvas) {
+              if (!document.hidden && typeof booted.isRunning === 'function' && !booted.isRunning()) booted.start();
+              return;
+            }
+            if (booted) {
+              engineRef.current = null;
+              bound = null;
+              try { booted.dispose(); } catch { /* already torn down */ }
+              booted = null;
+            }
+            booted = HalofluxEngine.create({
+              canvas,
+              canvas2: canvas2Ref.current,
+              live,
+              params: paramsRef.current,
+              onStats: setStats,
+            });
+            bound = canvas;
+            engineRef.current = booted;
+            try { booted.setParams(paramsRef.current); } catch { /* params effect also pushes */ }
+            if (typeof document === 'undefined' || !document.hidden) booted.start();
+          };
+          engineBootRef.current = boot;
+          boot();
+          return () => {
+            disposed = true;
+            engineBootRef.current = null;
+            if (timer) window.clearTimeout(timer);
+            const last = booted;
+            booted = null;
+            bound = null;
+            engineRef.current = null;
+            if (last && typeof last.dispose === 'function') {
+              try { last.dispose(); } catch { /* already torn down */ }
+            }
+          };
+        }, []);
+
+        /* watchdog: re-create a missing/unbound canvas and un-park a stopped loop, so a
+           black frame heals itself instead of waiting for the next reload. */
+        React.useEffect(() => {
+          const id = window.setInterval(() => {
+            const boot = engineBootRef.current;
+            if (!boot) return;
+            if (document.hidden) return;
+            const before = engineRef.current;
+            boot();
+            if (engineRef.current !== before || !engineRef.current) {
+              setDiagTick((n) => (n + 1) % 1000000);
+            }
+          }, 2000);
+          return () => window.clearInterval(id);
         }, []);
 
         /* params -> engine */
@@ -4968,6 +5984,40 @@ window.__ModuleLoader__.load({
           document.addEventListener('visibilitychange', onVis);
           return () => document.removeEventListener('visibilitychange', onVis);
         }, []);
+
+        /* auto-hide (hudAutoHide): a visible dialog, or a main column without a composer.
+           Polled instead of observed: the shell swaps whole subtrees on navigation, so a
+           MutationObserver would have to be re-attached constantly and still miss layout. */
+        React.useEffect(() => {
+          const on = params.hudAutoHide == null ? true : Number(params.hudAutoHide) >= 0.5;
+          if (!on) { setDim(false); return undefined; }
+          let last = null;
+          const visible = (el) => !!(el && (el.offsetParent || (el.getClientRects && el.getClientRects().length)));
+          const check = () => {
+            let modal = false;
+            try {
+              const strict = document.querySelector('[aria-modal="true"]');
+              if (strict && visible(strict)) modal = true;
+              if (!modal) {
+                const cands = document.querySelectorAll('[role="dialog"]');
+                for (let i = 0; i < cands.length; i += 1) {
+                  if (visible(cands[i])) { modal = true; break; }
+                }
+              }
+            } catch { modal = false; }
+            // an unknown shell (renamed classes) must never hide the rail for good
+            let composer = true;
+            try {
+              const main = document.querySelector('.mP3x-q_centerCol');
+              if (main) composer = !!main.querySelector('textarea, [contenteditable="true"], input[type="text"]');
+            } catch { composer = true; }
+            const next = modal || !composer;
+            if (next !== last) { last = next; setDim(next); }
+          };
+          const id = window.setInterval(check, 400);
+          check();
+          return () => window.clearInterval(id);
+        }, [params.hudAutoHide]);
 
         /* keyboard: C console, H hud */
         React.useEffect(() => {
@@ -5061,6 +6111,9 @@ window.__ModuleLoader__.load({
             'saturate(' + tintSat.toFixed(2) + ')');
         }
         const hudVisible = params.hudOn >= 0.5 && params.opacity > 0.02;
+        // the top Stats row is the one always-on readout: H toggles the rail + dock only,
+        // statsOn is the single switch that takes the readout away
+        const statsVisible = params.statsOn >= 0.5 && params.opacity > 0.02;
 
         // HUD layout: base font scale + edge offsets, all live from the console
         const rawScale = Number(params.hudScale);
@@ -5069,12 +6122,31 @@ window.__ModuleLoader__.load({
         const hudInset = Math.max(4, Math.min(48, isFinite(rawInset) ? rawInset : 12));
         const rawTop = Number(params.hudTop);
         const hudTop = Math.max(0, Math.min(80, isFinite(rawTop) ? rawTop : 6));
+        // top safety line: extra room below the window chrome so the rail starts under the
+        // session toolbar instead of on top of it (0-120, default 44)
+        const rawTopPad = Number(params.hudTopPad);
+        const hudTopPad = Math.max(0, Math.min(120, isFinite(rawTopPad) ? rawTopPad : 44));
+        const rawRailW = Number(params.hudRailW);
+        const railW = Math.max(0, Math.min(380, isFinite(rawRailW) ? rawRailW : 0));
+        const rawReserve = Number(params.hudReserve);
+        const reserve = Math.max(120, Math.min(400, isFinite(rawReserve) ? rawReserve : 220));
+        // lab rack (5 stacked research panels + a 2 panel dock) vs. the legacy feed + tools pair
+        const labOn = params.labOn == null ? true : Number(params.labOn) >= 0.5;
+        // the rail is a grid of equal rows; the row count has to match what Rack renders
+        // (src/lab.js): index + routes + workspace + agents, plus feed and advection when on
+        const advOn = Number(params.advOn) >= 0.5;
+        const feedOn = params.feedOn == null ? true : Number(params.feedOn) >= 0.5;
+        const rackRows = 4 + (feedOn ? 1 : 0) + (advOn ? 1 : 0);
         const rootVars = {
           pointerEvents: 'none',
           '--hfx-plate': platePct + '%',
           '--hfx-hud-scale': String(hudScale),
           '--hfx-hud-inset': hudInset + 'px',
           '--hfx-hud-top': hudTop + 'px',
+          '--hfx-hud-top-pad': hudTopPad + 'px',
+          '--hfx-hud-rail-w': railW > 0 ? railW + 'px' : 'clamp(240px,20vw,320px)',
+          '--hfx-hud-reserve': reserve + 'px',
+          '--hfx-rack-rows': String(rackRows),
         };
 
         // low-pass reading column: the SAME frame is mirrored onto a second canvas, blurred and
@@ -5103,8 +6175,33 @@ window.__ModuleLoader__.load({
         /** stable defaults object: the slider list memoises on reference identity */
         const baseDefaults = React.useMemo(() => HalofluxState.baseParams(), []);
 
+        /* engine diagnostics: a live HUD over a black frame means one of three things —
+           no engine at all, a parked loop, or a void/sleeping level. Report it. */
+        let diag = null;
+        try {
+          const engine = engineRef.current;
+          const cv = canvasRef.current;
+          const size = cv ? { w: cv.clientWidth || cv.width || 0, h: cv.clientHeight || cv.height || 0 } : { w: 0, h: 0 };
+          if (!engine) {
+            diag = { missing: true, w: size.w, h: size.h };
+          } else if (typeof engine.debug === 'function') {
+            const d = engine.debug() || {};
+            diag = {
+              missing: false,
+              w: size.w,
+              h: size.h,
+              loop: d.loopRunning === true,
+              present: d.present !== false,
+              asleep: !!d.asleep,
+              target: Number(d.target) || 0,
+            };
+          } else {
+            diag = { missing: false, w: size.w, h: size.h, loop: true, present: true, asleep: false, target: 1 };
+          }
+        } catch { diag = { missing: true, w: 0, h: 0 }; }
+
         const hudProps = {
-          params, setParams: patchParams, live, t, stats,
+          params, setParams: patchParams, live, t, stats, diag,
           open, setOpen,
           defaults: baseDefaults,
           presets: HalofluxEngine.PRESETS,
@@ -5118,7 +6215,8 @@ window.__ModuleLoader__.load({
           resetDefault: () => HalofluxState.resetDefault(),
         };
 
-        return h('div', { className: 'hfx-root', ref: hostRef, 'aria-hidden': open ? undefined : true, style: rootVars },
+        const rootEl = h('div', { className: 'hfx-root', ref: hostRef, 'aria-hidden': open ? undefined : true,
+          'data-hfx-dim': dim ? '1' : undefined, style: rootVars },
           h('style', null, BASE_CSS),
           h('canvas', {
             ref: canvasRef,
@@ -5146,12 +6244,24 @@ window.__ModuleLoader__.load({
               WebkitMaskImage: maskBand,
             },
           }),
-          hudVisible && HalofluxHud && live ? h(HalofluxHud.Stats, { ...hudProps, liveTick }) : null,
-          hudVisible && HalofluxHud && live && Number(params.feedOn) >= 0.5
-            ? h(HalofluxHud.Feed, { ...hudProps, liveTick }) : null,
-          hudVisible && HalofluxHud && live ? h(HalofluxHud.Tools, { ...hudProps, liveTick }) : null,
+          statsVisible && HalofluxHud && live ? h(HalofluxHud.Stats, { ...hudProps, liveTick }) : null,
+          hudVisible && HalofluxHud && HalofluxLab && live
+            ? h(React.Fragment, null,
+                h('div', { className: 'hfx-rail' + (labOn ? ' hfx-rack' : '') },
+                  labOn
+                    ? h(HalofluxLab.Rack, { ...hudProps, liveTick })
+                    : h(React.Fragment, null,
+                        Number(params.feedOn) >= 0.5 ? h(HalofluxHud.Feed, { ...hudProps, liveTick }) : null,
+                        h(HalofluxHud.Tools, { ...hudProps, liveTick }))),
+                labOn && HalofluxLab.Dock
+                  ? h('div', { className: 'hfx-dock' }, h(HalofluxLab.Dock, { ...hudProps, liveTick }))
+                  : null)
+            : null,
           HalofluxHud && live ? h(HalofluxHud.Console, { ...hudProps, liveTick }) : null,
         );
+
+        // closed over the frame instead of the overlay layer: below dialogs, above the chat
+        return createPortal ? h(SinkHost, null, rootEl) : rootEl;
       }
 
       /**
