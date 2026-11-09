@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## v0.8.1 — 2026-11-09
+
+**输入区黑边修复 + 环上仪表跟随运镜 + 构图滑杆即时生效**
+
+### 1. 底部黑边（输入区渐变去漆）
+- 会话进入运行态后，宿主的 `composerSeat`（`[data-phase=active]` 下 `position:sticky; bottom:0; z-index:7`，并带 36px 起不透明的 `--dsw-alias-bg-base` 渐变）会把窗口底部整条刷成底色；它压在 `.hfx-portal`（`z-index:1`）之上 —— 表现为「开始对话后底下多出一条黑边」，光环与右下 HUD 被切断。
+- 修复：新增宿主适配规则 `[data-composer-seat],[data-conversation-region="composer"]{background:transparent!important;background-image:none!important}`。只移除涂抹，不动布局、层级与任何参数；输入框卡片自带 `--dsw-specific-input-major` 底色，观感不变。
+- 用 `data-*` 钩子而非哈希类名（`an3WzG` / `mP3x-q` 随宿主编译变化），宿主升级后也不会失效。
+
+### 2. 环上仪表跟随运镜
+- `ctxArc`（上下文占用弧）、`phaseRing`（相位环，含调工具时的琥珀虚扫）、`stepTicks`（步骤刻度）、`tpsRibbon`（流速带）、`errPin`（失败钉）此前在**屏幕坐标系**绘制（函数开头 `setTransform(DPR…)` + `translate(cx,cy)`），运镜推近/平移时圆环放大而仪表钉死在视口。
+- 现在它们与圆环共用同一相机矩阵：`drawGauges()` / `drawPhaseRing()` / `drawErrPins()` / `drawTpsRibbon()` 先 `camT(S, DPR)` 再 `translate(cx, cy)`；失败时的全屏红闪仍回到屏幕坐标（它需要铺满整帧）。
+- 运镜关闭时 `camT()` 退化为 `setTransform(DPR,0,0,DPR,0,0)`，固定机位画面与旧版逐像素一致。
+
+### 3. 构图滑杆即时生效
+- `centerX` / `centerY` 标记 `geometry`，`scale` 标记 `resize`：拖动滑杆立刻重算构图或重建缓冲，不再需要「碰一下窗口尺寸」才生效。
+- `tools/engine-smoke.cjs` 的 rebuild 参数断言同步：5 → 8（新增 `centerX` / `centerY` / `scale`）。
+
+### 参数
+- 仍为 **117 项**：无新增、无改名、无默认值变化、无表单结构变化；旧 `localStorage` 设置继续有效。
+
+### 升级说明
+- `client.js` 由 `build.mjs` 从 `src/*.js` 重新生成；`node --check client.js` 通过，`tools/client-smoke.cjs` 与 `tools/engine-smoke.cjs` 全部 PASS。
+- 安装后需**完全退出宿主（含托盘进程）再启动**，浏览器才会拿到新 bundle。
+
 ## v0.8.0 — 2026-11-08
 
 **HUD 图层下沉 + 7 面板 + 顶部安全线 + 自动淡出 + 引擎自愈**

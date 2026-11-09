@@ -39,6 +39,8 @@ const HalofluxState = (() => {
       // UI-background composition: the author's MINE look, scaled and shifted so the
       // halo sits over the left column and its beams sweep across the transcript.
       opacity: 0.45, blend: 0, activityGain: 1,
+      // composition centre: the shipped look parks the halo on the left edge, so the
+      // ring's data band reads as a backdrop instead of a second column
       centerX: -0.15, centerY: 0, scale: 0.6, hudOn: 0, feedOn: 1, dataMode: 1,
       hudRailW: 0, hudReserve: 220, labOn: 1,
       // top safety line + auto-hide: hudTopPad is the toolbar allowance under the window
@@ -68,6 +70,26 @@ const HalofluxState = (() => {
   }
 
   let current = initialParams();
+
+  // One-shot restore: the earlier builds of this port shipped the ring further left
+  // (-0.45 / -0.8). Put those installs back on the composition they started from
+  // (centre at 0, i.e. the port's pre-experiment look). Any other value is a
+  // deliberate hand-tune and is left alone. From here on the sliders apply live.
+  const LAYOUT_KEY = 'dsh-haloflux:layout:v5';
+  const MOVED_CX = [-0.8, -0.45];
+  try {
+    if (window.localStorage.getItem(LAYOUT_KEY) !== '1') {
+      const isMoved = (v) => MOVED_CX.some((l) => Math.abs(Number(v) - l) < 1e-6);
+      if (isMoved(current.centerX)) {
+        current = { ...current, centerX: 0 };
+        writeJson(STORAGE_KEY, current);
+      }
+      const defaults0 = readJson(PARAMS_KEY);
+      if (defaults0 && isMoved(defaults0.centerX)) writeJson(PARAMS_KEY, { ...defaults0, centerX: 0 });
+      window.localStorage.setItem(LAYOUT_KEY, '1');
+    }
+  } catch { /* storage blocked: keep whatever we loaded */ }
+
   const listeners = new Set();
 
   function get() { return current; }

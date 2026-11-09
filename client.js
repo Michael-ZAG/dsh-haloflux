@@ -129,9 +129,13 @@ window.__ModuleLoader__.load({
         ['blend', '混合模式 (0屏幕 1变亮 2正常)', 0, 2, 1, '插件'],
         ['idleMotion', '静默态强度', 0, 1, 0.05, '插件'],
         ['activityGain', '活跃度增益', 0.2, 3, 0.05, '插件'],
-        ['centerX', '构图中心 X', -2, 2, 0.05, '插件'],
-        ['centerY', '构图中心 Y', -2, 2, 0.05, '插件'],
-        ['scale', '整体缩放', 0.5, 2.5, 0.05, '插件'],
+        // these feed cx/cy/R/RO. A pan only needs the geometry re-derived (the draw
+        // code reads cx/cy live); the scale/ringWidth sliders change buffer sizes, so
+        // they take the full rebuild. Without a flag the slider did nothing until the
+        // window happened to be resized.
+        ['centerX', '构图中心 X', -2, 2, 0.05, '插件', 'geometry'],
+        ['centerY', '构图中心 Y', -2, 2, 0.05, '插件', 'geometry'],
+        ['scale', '整体缩放', 0.5, 2.5, 0.05, '插件', 'resize'],
         ['hudOn', 'HUD 显示 (0关 1开)', 0, 1, 1, '插件'],
         ['feedOn', '事件流显示 (0关 1开)', 0, 1, 1, '插件'],
         /* ---- round 3: data capture level ---- */
@@ -374,6 +378,9 @@ window.__ModuleLoader__.load({
         let raf = 0, last = nowMs(), sizeCheck = 0;
         let frames = 0, fpsT = 0, fps = 60, statT = 0;
         let rebuildQ = {};
+        // full rebuilds (canvas + every offscreen buffer) are expensive, so a scale
+        // slider drag is coalesced; a pure pan only re-derives the geometry
+        let lastBigRebuild = 0;
 
         /* ---------- v0.7.0: adaptive quality + idle sleep ----------
            Cost used to be independent of what the user sees: an idle session sits at
@@ -550,26 +557,10 @@ window.__ModuleLoader__.load({
         }
 
         /* ---------- setup ---------- */
-        function doRebuild(m) {
-          if (disposed) return;
-          DPR = clamp((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 1, 2);
-          W = m.w; H = m.h;
-          canvas.width = Math.max(1, Math.round(W * DPR));
-          canvas.height = Math.max(1, Math.round(H * DPR));
-          S = canvas.getContext('2d');
-          if (!S) { ready = false; return; }
-          S.setTransform(DPR, 0, 0, DPR, 0, 0);
-          S_MAIN = S;
-          // optional second surface: the host masks a blurred copy of the same frame over the
-          // reading column, so the text area gets a low-pass version of the field instead of
-          // a punched-out hole (the "guardBlur" switch)
-          if (canvas2) {
-            canvas2.width = canvas.width; canvas2.height = canvas.height;
-            S2 = canvas2.getContext('2d');
-          }
-          HAS_FILTER = 'filter' in S;
-
-          // composition centre: original W*0.07 / H*0.5, now offset by centerX/centerY (-1..1 = half screen)
+        /* everything derived from W/H + centerX/centerY/scale/ringWidth. Split out of
+           doRebuild so a pure pan re-derives the layout without reallocating a single
+           buffer: the draw code reads cx/cy live, and R/RO are unchanged by a pan. */
+        function computeGeom() {
           const sc = clamp(num(C.scale, 1), 0.05, 4);
           cx = W * (0.07 + clamp(num(C.centerX, 0), -2, 2) * 0.5);
           cy = H * (0.5 + clamp(num(C.centerY, 0), -2, 2) * 0.5);
@@ -589,6 +580,27 @@ window.__ModuleLoader__.load({
             wg.addColorStop(0, '#111215'); wg.addColorStop(1, '#0c0d0f');
             webDisc = wg;
           } catch (e) { webDisc = null; }
+        }
+        function doRebuild(m) {
+          if (disposed) return;
+          DPR = clamp((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 1, 2);
+          W = m.w; H = m.h;
+          canvas.width = Math.max(1, Math.round(W * DPR));
+          canvas.height = Math.max(1, Math.round(H * DPR));
+          S = canvas.getContext('2d');
+          if (!S) { ready = false; return; }
+          S.setTransform(DPR, 0, 0, DPR, 0, 0);
+          S_MAIN = S;
+          // optional second surface: the host masks a blurred copy of the same frame over the
+          // reading column, so the text area gets a low-pass version of the field instead of
+          // a punched-out hole (the "guardBlur" switch)
+          if (canvas2) {
+            canvas2.width = canvas.width; canvas2.height = canvas.height;
+            S2 = canvas2.getContext('2d');
+          }
+          HAS_FILTER = 'filter' in S;
+
+          computeGeom();
 
           release(webBase);
           if (webLayers.length) webLayers.forEach(release);
@@ -662,7 +674,19 @@ window.__ModuleLoader__.load({
         }
         function applyRebuilds() {
           if (!ready || disposed) return;
-          if (rebuildQ.resize) { doRebuild(measure()); return; }
+          // a pan is cheap: just re-derive cx/cy/R/RO and redraw on the next frame
+          if (rebuildQ.geometry) { rebuildQ.geometry = 0; computeGeom(); dirty = true; }
+          if (rebuildQ.resize) {
+            // a full rebuild reallocates every buffer, so a drag is coalesced to ~7/s
+            const t = nowMs();
+            if (t - lastBigRebuild >= 140) {
+              lastBigRebuild = t;
+              doRebuild(measure());
+              painted = false;
+              return;
+            }
+            return; // still queued for the next frame inside the throttle window
+          }
           if (rebuildQ.web) { rebuildQ.web = 0; buildWeb(); }
           if (rebuildQ.slots) { rebuildQ.slots = 0; for (const s of slots) { release(s.c); s.c = null; } }
           if (rebuildQ.flyers) { rebuildQ.flyers = 0; initFlyers(); }
@@ -2153,7 +2177,11 @@ window.__ModuleLoader__.load({
           if (errT >= 0) { errT += dt; if (errT > 0.9) errT = -1; }
         }
         function drawGauges() {
-          S.setTransform(DPR, 0, 0, DPR, 0, 0);
+          // The gauges belong to the ring, not to the screen. They used to reset to a
+          // plain DPR transform here, so under 运镜 the ring pushed in while these arcs
+          // stayed nailed to the viewport. Run them through the ring's own camera
+          // transform (same one drawRing rides) so they travel and scale with it.
+          camT(S, DPR);
           S.save(); S.translate(cx, cy);
           // context occupancy: an arc inside the ring, cyan until it gets tight. When the
           // host does not publish a context window, a grey base track is still drawn, so
@@ -2212,6 +2240,8 @@ window.__ModuleLoader__.load({
           // failed tool's own angle.
           if (errT >= 0 && num(C.errFx, 0) >= 0.5) {
             const k = Math.sin(Math.PI * Math.min(1, errT / 0.9));
+            // a full-frame wash must NOT inherit the camera matrix above
+            S.setTransform(DPR, 0, 0, DPR, 0, 0);
             S.globalCompositeOperation = 'lighter';
             S.fillStyle = 'rgba(255,70,60,' + (0.05 * k) + ')';
             S.fillRect(0, 0, W, H);
@@ -2268,6 +2298,7 @@ window.__ModuleLoader__.load({
           if (num(C.phaseRing, 0) < 0.5) return;
           const ph = phaseNow();
           const RA = R * 0.86;
+          camT(S, DPR);                  // ride the ring's camera (see drawGauges)
           S.save(); S.translate(cx, cy);
           // the phase signature is MOTION, not colour: each phase has its own rhythm
           const a0 = -Math.PI / 2;
@@ -2299,6 +2330,7 @@ window.__ModuleLoader__.load({
           if (num(C.errPin, 0) < 0.5) return;
           const tools = live && Array.isArray(live.tools) ? live.tools : [];
           if (!tools.length) return;
+          camT(S, DPR);                  // ride the ring's camera (see drawGauges)
           S.save(); S.translate(cx, cy);
           for (let i = Math.max(0, tools.length - 8); i < tools.length; i++) {
             const t = tools[i];
@@ -2326,6 +2358,7 @@ window.__ModuleLoader__.load({
           const med = sorted[sorted.length >> 1] || tps;
           const k = clamp(tps / Math.max(1, med * 2), 0, 1);
           const RA = R * 0.92, a0 = -Math.PI * 0.72, span = 0.42;
+          camT(S, DPR);                  // ride the ring's camera (see drawGauges)
           S.save(); S.translate(cx, cy);
           S.strokeStyle = 'rgba(150,225,255,.18)'; S.lineWidth = 3;
           S.beginPath(); S.arc(0, 0, RA, a0 - span, a0 + span); S.stroke();
@@ -2537,6 +2570,8 @@ window.__ModuleLoader__.load({
           // UI-background composition: the author's MINE look, scaled and shifted so the
           // halo sits over the left column and its beams sweep across the transcript.
           opacity: 0.45, blend: 0, activityGain: 1,
+          // composition centre: the shipped look parks the halo on the left edge, so the
+          // ring's data band reads as a backdrop instead of a second column
           centerX: -0.15, centerY: 0, scale: 0.6, hudOn: 0, feedOn: 1, dataMode: 1,
           hudRailW: 0, hudReserve: 220, labOn: 1,
           // top safety line + auto-hide: hudTopPad is the toolbar allowance under the window
@@ -2566,6 +2601,26 @@ window.__ModuleLoader__.load({
       }
 
       let current = initialParams();
+
+      // One-shot restore: the earlier builds of this port shipped the ring further left
+      // (-0.45 / -0.8). Put those installs back on the composition they started from
+      // (centre at 0, i.e. the port's pre-experiment look). Any other value is a
+      // deliberate hand-tune and is left alone. From here on the sliders apply live.
+      const LAYOUT_KEY = 'dsh-haloflux:layout:v5';
+      const MOVED_CX = [-0.8, -0.45];
+      try {
+        if (window.localStorage.getItem(LAYOUT_KEY) !== '1') {
+          const isMoved = (v) => MOVED_CX.some((l) => Math.abs(Number(v) - l) < 1e-6);
+          if (isMoved(current.centerX)) {
+            current = { ...current, centerX: 0 };
+            writeJson(STORAGE_KEY, current);
+          }
+          const defaults0 = readJson(PARAMS_KEY);
+          if (defaults0 && isMoved(defaults0.centerX)) writeJson(PARAMS_KEY, { ...defaults0, centerX: 0 });
+          window.localStorage.setItem(LAYOUT_KEY, '1');
+        }
+      } catch { /* storage blocked: keep whatever we loaded */ }
+
       const listeners = new Set();
 
       function get() { return current; }
@@ -5385,7 +5440,7 @@ window.__ModuleLoader__.load({
       /** a stale "idle" right after a switch is held off only briefly, so a running -> idle
           switch starts dimming WITH the turn instead of spinning at full brightness first */
       const SWITCH_SETTLE_MS = 260;
-
+    
       const DICT = {
         en: {
           'ui.console': 'CONTROL',
@@ -5472,7 +5527,7 @@ window.__ModuleLoader__.load({
           'ui.importHint': '粘贴 JSON 后按 Enter 应用',
         },
       };
-
+    
       const BASE_CSS = `
     .hfx-root{position:absolute;inset:0;pointer-events:none;z-index:0;isolation:auto}
     /* host for the sunk HUD: a child of .mP3x-q_frame, just before shell.overlay (z 20).
@@ -5573,10 +5628,24 @@ window.__ModuleLoader__.load({
     .hfx-stats{transform-origin:top center;scale:var(--hfx-hud-scale,1)}
     .hfx-rail{transform-origin:right center;scale:var(--hfx-hud-scale,1)}
     .hfx-console{transform-origin:top right;scale:var(--hfx-hud-scale,1)}
+    
+    /* ---- host adaptation: the composer seat veil ----
+       Once a conversation is open (data-phase=active) the shell paints an opaque
+       gradient on the sticky composer seat (z-index 7): transparent at the top,
+       solid --dsw-alias-bg-base from 36px down. Because the seat is a full-width
+       sticky block, that paint reads as a black bar welded to the bottom edge and
+       it sits ABOVE this plugin's layers (.hfx-portal z 1), so it also swallows the
+       lower HUD panels. The seat only needs to be a layout anchor — the composer
+       card carries its own surface — so strip the paint and let the full-frame
+       background run to the window edge. Layout, z-index and every plugin
+       parameter are untouched; the selectors are the shell's stable semantic hooks
+       (the hashed class prefix changes between DSH builds, data-* does not). */
+    [data-composer-seat],
+    [data-conversation-region="composer"]{background:transparent!important;background-image:none!important}
     `;
-
+    
       /* ---------- params live in the shared store (src/state.js) ---------- */
-
+    
       /** The DSH brand colour as a hue, for "follow the theme colour" (null = unavailable). */
       function themeHue() {
         try {
@@ -5604,13 +5673,13 @@ window.__ModuleLoader__.load({
           return ((hue * 60) + 360) % 360;
         } catch { return null; }
       }
-
+    
       function prefersReducedMotion() {
         try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
       }
-
+    
       /* ---------- locale ---------- */
-
+    
       function makeT(locale) {
         function activeId() {
           try {
@@ -5630,16 +5699,16 @@ window.__ModuleLoader__.load({
           return dict[key] || DICT.en[key] || key;
         };
       }
-
+    
       /* ---------- stable selectors ---------- */
-
+    
       const selectMainSessionId = (state) => {
         if (!state || !state.byId) return undefined;
         const rows = Object.values(state.byId);
         for (const row of rows) if (row && row.retainedBy && (row.retainedBy.mainView || 0) > 0) return row.id;
         return rows.length === 1 && rows[0] ? rows[0].id : undefined;
       };
-
+    
       /** A blank Session is the "new session" hero page: the decoration fades out there. */
       const selectMainBlank = (state) => {
         if (!state || !state.byId) return false;
@@ -5647,9 +5716,9 @@ window.__ModuleLoader__.load({
         const row = id === undefined ? undefined : state.byId[id];
         return !!(row && row.blank === true);
       };
-
+    
       /* ---------- portal host: sink the HUD below dialogs ---------- */
-
+    
       // react-dom comes from the same loader factory as react. When it is missing the
       // HUD still renders in shell.overlay (the old behaviour), it just is not sunk.
       let ReactDOM = null;
@@ -5661,10 +5730,10 @@ window.__ModuleLoader__.load({
       const createPortal = ReactDOM && typeof ReactDOM.createPortal === 'function'
         ? ReactDOM.createPortal.bind(ReactDOM)
         : null;
-
+    
       const PORTAL_TRIES = 40;      // the shell frame can appear a frame after the slot
       const PORTAL_TRIES_MS = 50;
-
+    
       /** the frame's portal host, created once and reused across re-renders / reloads */
       function findHostEl() {
         if (typeof document === 'undefined' || !document) return null;
@@ -5683,7 +5752,7 @@ window.__ModuleLoader__.load({
         frame.insertBefore(el, overlay && overlay.parentElement === frame ? overlay : null);
         return el;
       }
-
+    
       /**
        * Renders the HUD into a host div inside the shell frame, immediately before
        * shell.overlay (z 20). The host sits at z 1: above the transcript, below
@@ -5697,7 +5766,7 @@ window.__ModuleLoader__.load({
       function SinkHost(props) {
         const [host, setHost] = React.useState(() => (createPortal ? findHostEl() : null));
         const [failed, setFailed] = React.useState(false);
-
+    
         React.useEffect(() => {
           if (!createPortal || host) return undefined;
           let tries = 0;
@@ -5724,21 +5793,21 @@ window.__ModuleLoader__.load({
             if (timer) window.clearTimeout(timer);
           };
         }, [host]);
-
+    
         if (failed || !createPortal) return props.children;
         if (!host) return null;
         return createPortal(props.children, host);
       }
-
+    
       /* ---------- the layer ---------- */
-
+    
       function HalofluxLayer(props) {
         const { useSessions, useSessionStatus } = props;
         const h = React.createElement;
-
+    
         const sessionsSvc = props.__sessions || undefined;
         const t = props.__t;
-
+    
         const sessionId = useSessions(selectMainSessionId);
         const blank = useSessions(selectMainBlank);
         const stateSelector = React.useCallback((map) => {
@@ -5746,11 +5815,11 @@ window.__ModuleLoader__.load({
           return hit ? hit.running === true : undefined;
         }, [sessionId]);
         const running = useSessionStatus(stateSelector);
-
+    
         // "present" = a real conversation is on screen. The blank New Session hero page
         // (and the no-session page) both mean absent, so the halo fades out there.
         const present = sessionId !== undefined && !blank;
-
+    
         const hostRef = React.useRef(null);
         const canvasRef = React.useRef(null);
         const canvas2Ref = React.useRef(null);
@@ -5761,7 +5830,7 @@ window.__ModuleLoader__.load({
         const prevSessionRef = React.useRef(sessionId);
         /** when the current switch started: keeps a fresh Session's stale "not running" out */
         const switchAtRef = React.useRef(0);
-
+    
         const params = HalofluxState.useParams();
         const [open, setOpen] = React.useState(false);
         const [stats, setStats] = React.useState(null);
@@ -5775,9 +5844,9 @@ window.__ModuleLoader__.load({
         const [diagTick, setDiagTick] = React.useState(0);
         /** last time a HUD tick was pushed (hudFadeMs throttling) */
         const lastHudPush = React.useRef(0);
-
+    
         const patchParams = React.useCallback((partial) => { HalofluxState.set(partial); }, []);
-
+    
         /* live source: created once, bound to the active session */
         React.useEffect(() => {
           const live = createHalofluxLive({
@@ -5805,7 +5874,7 @@ window.__ModuleLoader__.load({
           try { if (typeof window !== 'undefined' && window.__HFX_DEBUG) window.__hfx = { live: live, engine: () => engineRef.current }; } catch { /* debug hook */ }
           return () => { off(); live.dispose(); liveRef.current = null; };
         }, []);
-
+    
         /* live session switch. A switch can report "no main session" for a frame or
            two; skip those gaps so the previous feed (and its level) survives until the
            new Session's binding is actually published. */
@@ -5813,7 +5882,7 @@ window.__ModuleLoader__.load({
           if (sessionId === undefined) return;
           if (liveRef.current) liveRef.current.setSession(sessionId);
         }, [sessionId]);
-
+    
         /* presence: running conversation vs. New Session hero / no Session at all.
            Applied only after a short grace, otherwise the whole frame collapses to
            voidLevel in the middle of a Session switch. */
@@ -5828,7 +5897,7 @@ window.__ModuleLoader__.load({
           }, SWITCH_GRACE_MS);
           return () => { clearTimeout(timer); };
         }, [present]);
-
+    
         /* switching to a different real conversation spins the ring exactly one turn.
            The last real id is remembered across a transient undefined gap, so a
            S1 -> (gap) -> S2 switch still revolves instead of resetting silently. */
@@ -5845,17 +5914,17 @@ window.__ModuleLoader__.load({
           if (engine && typeof engine.revolve === 'function') engine.revolve(1);
           // eslint-disable-next-line react-hooks/exhaustive-deps
         }, [sessionId]);
-
+    
         /* author's default on first run */
         React.useEffect(() => {
           if (prefersReducedMotion() && params.idleMotion > 0.05) patchParams({ idleMotion: 0.05 });
           // eslint-disable-next-line react-hooks/exhaustive-deps
         }, []);
-
+    
         /* latest params for a late engine boot (the engine effect below runs once) */
         const paramsRef = React.useRef(params);
         paramsRef.current = params;
-
+    
         /* engine lifecycle. The canvas lives inside the sunk portal, and SinkHost only
            mounts its children once the shell frame is found (it starts from a null host
            and retries for up to 2s). So a missing canvas is a TIMING state, not a fatal
@@ -5914,7 +5983,7 @@ window.__ModuleLoader__.load({
             }
           };
         }, []);
-
+    
         /* watchdog: re-create a missing/unbound canvas and un-park a stopped loop, so a
            black frame heals itself instead of waiting for the next reload. */
         React.useEffect(() => {
@@ -5930,13 +5999,13 @@ window.__ModuleLoader__.load({
           }, 2000);
           return () => window.clearInterval(id);
         }, []);
-
+    
         /* params -> engine */
         React.useEffect(() => {
           const engine = engineRef.current;
           if (engine) engine.setParams(params);
         }, [params]);
-
+    
         /* running state -> live (a hero/no-session page is never "running").
            Absence is applied by the presence effect above, with its grace period. */
         React.useEffect(() => {
@@ -5957,7 +6026,7 @@ window.__ModuleLoader__.load({
           live.setRunning(running);
           return undefined;
         }, [running, present]);
-
+    
         /* container resize */
         React.useEffect(() => {
           const host = hostRef.current;
@@ -5973,7 +6042,7 @@ window.__ModuleLoader__.load({
           ro.observe(document.documentElement);
           return () => { ro.disconnect(); if (raf) cancelAnimationFrame(raf); };
         }, []);
-
+    
         /* visibility: stop burning frames on a hidden tab */
         React.useEffect(() => {
           const onVis = () => {
@@ -5984,7 +6053,7 @@ window.__ModuleLoader__.load({
           document.addEventListener('visibilitychange', onVis);
           return () => document.removeEventListener('visibilitychange', onVis);
         }, []);
-
+    
         /* auto-hide (hudAutoHide): a visible dialog, or a main column without a composer.
            Polled instead of observed: the shell swaps whole subtrees on navigation, so a
            MutationObserver would have to be re-attached constantly and still miss layout. */
@@ -6018,7 +6087,7 @@ window.__ModuleLoader__.load({
           check();
           return () => window.clearInterval(id);
         }, [params.hudAutoHide]);
-
+    
         /* keyboard: C console, H hud */
         React.useEffect(() => {
           const onKey = (event) => {
@@ -6034,7 +6103,7 @@ window.__ModuleLoader__.load({
           window.addEventListener('keydown', onKey);
           return () => window.removeEventListener('keydown', onKey);
         }, [params.hudOn, patchParams]);
-
+    
         /* idleSleepMs: after N ms without interaction the engine parks entirely.
            One shared interaction clock drives both this and readFade. */
         React.useEffect(() => {
@@ -6076,7 +6145,7 @@ window.__ModuleLoader__.load({
             window.removeEventListener('pointermove', bump, passive);
           };
         }, [params.readFade, params.idleSleepMs]);
-
+    
         const blendMode = ['screen', 'lighten', 'normal'][params.blend | 0] || 'screen';
         // readFade: while the user scrolls/types the field recedes, then returns on idle
         const rawFade = Number(params.readFade);
@@ -6114,7 +6183,7 @@ window.__ModuleLoader__.load({
         // the top Stats row is the one always-on readout: H toggles the rail + dock only,
         // statsOn is the single switch that takes the readout away
         const statsVisible = params.statsOn >= 0.5 && params.opacity > 0.02;
-
+    
         // HUD layout: base font scale + edge offsets, all live from the console
         const rawScale = Number(params.hudScale);
         const hudScale = Math.max(0.8, Math.min(1.6, isFinite(rawScale) ? rawScale : 1));
@@ -6148,7 +6217,7 @@ window.__ModuleLoader__.load({
           '--hfx-hud-reserve': reserve + 'px',
           '--hfx-rack-rows': String(rackRows),
         };
-
+    
         // low-pass reading column: the SAME frame is mirrored onto a second canvas, blurred and
         // masked to the column, while the main canvas gets a matching hole. Sharp outside,
         // defocused inside — depth instead of a punched-out hole, and no brightness loss.
@@ -6170,11 +6239,11 @@ window.__ModuleLoader__.load({
           : undefined;
         const lowFilter = (guardBlur > 0.3 ? 'blur(' + guardBlur.toFixed(1) + 'px) ' : '')
           + (filters.length ? filters.join(' ') : '');
-
+    
         const live = liveRef.current;
         /** stable defaults object: the slider list memoises on reference identity */
         const baseDefaults = React.useMemo(() => HalofluxState.baseParams(), []);
-
+    
         /* engine diagnostics: a live HUD over a black frame means one of three things —
            no engine at all, a parked loop, or a void/sleeping level. Report it. */
         let diag = null;
@@ -6199,7 +6268,7 @@ window.__ModuleLoader__.load({
             diag = { missing: false, w: size.w, h: size.h, loop: true, present: true, asleep: false, target: 1 };
           }
         } catch { diag = { missing: true, w: 0, h: 0 }; }
-
+    
         const hudProps = {
           params, setParams: patchParams, live, t, stats, diag,
           open, setOpen,
@@ -6214,7 +6283,7 @@ window.__ModuleLoader__.load({
           saveDefault: () => HalofluxState.saveDefault(),
           resetDefault: () => HalofluxState.resetDefault(),
         };
-
+    
         const rootEl = h('div', { className: 'hfx-root', ref: hostRef, 'aria-hidden': open ? undefined : true,
           'data-hfx-dim': dim ? '1' : undefined, style: rootVars },
           h('style', null, BASE_CSS),
@@ -6259,11 +6328,11 @@ window.__ModuleLoader__.load({
             : null,
           HalofluxHud && live ? h(HalofluxHud.Console, { ...hudProps, liveTick }) : null,
         );
-
+    
         // closed over the frame instead of the overlay layer: below dialogs, above the chat
         return createPortal ? h(SinkHost, null, rootEl) : rootEl;
       }
-
+    
       /**
        * Root-scoped slot entries cannot read the plugin's own context from props,
        * so the registration closes over it here.
@@ -6273,7 +6342,7 @@ window.__ModuleLoader__.load({
           return HalofluxLayer({ ...props, __ctx: ctx, __t: t, __sessions: ctx.get('sessions') });
         };
       }
-
+    
       /**
        * The settings page lives in the Settings panel's own React tree, so it only
        * receives the locale closure; parameters travel through HalofluxState.
@@ -6283,7 +6352,7 @@ window.__ModuleLoader__.load({
           return React.createElement(HalofluxSettings.SettingsPage, { __t: t });
         };
       }
-
+    
       return {
         inject: ['slots', 'sessions'],
         apply(ctx) {
@@ -6296,14 +6365,14 @@ window.__ModuleLoader__.load({
               t = makeT(locale);
             }
           } catch { /* locale absent: fall back to navigator */ }
-
+    
           ctx.slots.inject('shell.overlay', () => ctx.slots.register({
             name: 'shell.overlay',
             id: 'haloflux',
             order: -10,
             label: () => t('ui.consoleTitle'),
           }, makeLayer(ctx, t)));
-
+    
           ctx.slots.inject('settings.section', () => ctx.slots.register({
             name: 'settings.section',
             id: 'haloflux',

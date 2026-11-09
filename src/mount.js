@@ -199,6 +199,20 @@ const HalofluxPlugin = (() => {
 .hfx-stats{transform-origin:top center;scale:var(--hfx-hud-scale,1)}
 .hfx-rail{transform-origin:right center;scale:var(--hfx-hud-scale,1)}
 .hfx-console{transform-origin:top right;scale:var(--hfx-hud-scale,1)}
+
+/* ---- host adaptation: the composer seat veil ----
+   Once a conversation is open (data-phase=active) the shell paints an opaque
+   gradient on the sticky composer seat (z-index 7): transparent at the top,
+   solid --dsw-alias-bg-base from 36px down. Because the seat is a full-width
+   sticky block, that paint reads as a black bar welded to the bottom edge and
+   it sits ABOVE this plugin's layers (.hfx-portal z 1), so it also swallows the
+   lower HUD panels. The seat only needs to be a layout anchor — the composer
+   card carries its own surface — so strip the paint and let the full-frame
+   background run to the window edge. Layout, z-index and every plugin
+   parameter are untouched; the selectors are the shell's stable semantic hooks
+   (the hashed class prefix changes between DSH builds, data-* does not). */
+[data-composer-seat],
+[data-conversation-region="composer"]{background:transparent!important;background-image:none!important}
 `;
 
   /* ---------- params live in the shared store (src/state.js) ---------- */

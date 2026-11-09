@@ -177,7 +177,11 @@ const row = k => E.PARAMS.find(p => p[0] === k) || [];
 const flag = k => row(k)[6];
 ok(flag('ringWidth') === 'resize' && flag('rimWidth') === 'slots' && flag('webBright') === 'web'
   && flag('webBlur') === 'web' && flag('flyerCount') === 'flyers', 'rebuild flags preserved');
-ok(E.PARAMS.filter(p => p[6]).length === 5, 'exactly 5 rebuild params');
+// composition sliders (centerX/centerY/scale) must re-derive geometry live: without a
+// flag the slider did nothing until the window happened to be resized (v0.8.1)
+ok(flag('centerX') === 'geometry' && flag('centerY') === 'geometry' && flag('scale') === 'resize',
+  'composition sliders carry rebuild flags');
+ok(E.PARAMS.filter(p => p[6]).length === 8, 'exactly 8 rebuild params');
 ok(Object.keys(E.BASE).length === PARAM_N && keys.every(k => k in E.BASE), 'BASE covers all ' + PARAM_N + ' keys');
 ok(row('idleMotion')[1] === '静默态强度', 'idleMotion label = 静默态强度');
 ok(E.BASE.idleMotion === 0.06 && E.PRESETS.MINE.idleMotion === 0.06, 'idleMotion default = 0.06');

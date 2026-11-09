@@ -1,6 +1,6 @@
 {
   "name": "dsh-haloflux",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "A live light-ring background for the DeepSeek Harness Web GUI, driven by the current session: ring rotation, token capture and beams follow the model call, with a 7-panel HUD, a Settings page and a three-level data capture dial. Unofficial distribution fork of Ke-wood/dsh-haloflux.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Ryder191 (RYDER CODE / Ms MAIKEBAIs CAT) - original HALOFLUX",

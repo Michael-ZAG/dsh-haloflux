@@ -123,9 +123,13 @@ const HalofluxEngine = (() => {
     ['blend', '混合模式 (0屏幕 1变亮 2正常)', 0, 2, 1, '插件'],
     ['idleMotion', '静默态强度', 0, 1, 0.05, '插件'],
     ['activityGain', '活跃度增益', 0.2, 3, 0.05, '插件'],
-    ['centerX', '构图中心 X', -2, 2, 0.05, '插件'],
-    ['centerY', '构图中心 Y', -2, 2, 0.05, '插件'],
-    ['scale', '整体缩放', 0.5, 2.5, 0.05, '插件'],
+    // these feed cx/cy/R/RO. A pan only needs the geometry re-derived (the draw
+    // code reads cx/cy live); the scale/ringWidth sliders change buffer sizes, so
+    // they take the full rebuild. Without a flag the slider did nothing until the
+    // window happened to be resized.
+    ['centerX', '构图中心 X', -2, 2, 0.05, '插件', 'geometry'],
+    ['centerY', '构图中心 Y', -2, 2, 0.05, '插件', 'geometry'],
+    ['scale', '整体缩放', 0.5, 2.5, 0.05, '插件', 'resize'],
     ['hudOn', 'HUD 显示 (0关 1开)', 0, 1, 1, '插件'],
     ['feedOn', '事件流显示 (0关 1开)', 0, 1, 1, '插件'],
     /* ---- round 3: data capture level ---- */
@@ -368,6 +372,9 @@ const HalofluxEngine = (() => {
     let raf = 0, last = nowMs(), sizeCheck = 0;
     let frames = 0, fpsT = 0, fps = 60, statT = 0;
     let rebuildQ = {};
+    // full rebuilds (canvas + every offscreen buffer) are expensive, so a scale
+    // slider drag is coalesced; a pure pan only re-derives the geometry
+    let lastBigRebuild = 0;
 
     /* ---------- v0.7.0: adaptive quality + idle sleep ----------
        Cost used to be independent of what the user sees: an idle session sits at
@@ -544,26 +551,10 @@ const HalofluxEngine = (() => {
     }
 
     /* ---------- setup ---------- */
-    function doRebuild(m) {
-      if (disposed) return;
-      DPR = clamp((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 1, 2);
-      W = m.w; H = m.h;
-      canvas.width = Math.max(1, Math.round(W * DPR));
-      canvas.height = Math.max(1, Math.round(H * DPR));
-      S = canvas.getContext('2d');
-      if (!S) { ready = false; return; }
-      S.setTransform(DPR, 0, 0, DPR, 0, 0);
-      S_MAIN = S;
-      // optional second surface: the host masks a blurred copy of the same frame over the
-      // reading column, so the text area gets a low-pass version of the field instead of
-      // a punched-out hole (the "guardBlur" switch)
-      if (canvas2) {
-        canvas2.width = canvas.width; canvas2.height = canvas.height;
-        S2 = canvas2.getContext('2d');
-      }
-      HAS_FILTER = 'filter' in S;
-
-      // composition centre: original W*0.07 / H*0.5, now offset by centerX/centerY (-1..1 = half screen)
+    /* everything derived from W/H + centerX/centerY/scale/ringWidth. Split out of
+       doRebuild so a pure pan re-derives the layout without reallocating a single
+       buffer: the draw code reads cx/cy live, and R/RO are unchanged by a pan. */
+    function computeGeom() {
       const sc = clamp(num(C.scale, 1), 0.05, 4);
       cx = W * (0.07 + clamp(num(C.centerX, 0), -2, 2) * 0.5);
       cy = H * (0.5 + clamp(num(C.centerY, 0), -2, 2) * 0.5);
@@ -583,6 +574,27 @@ const HalofluxEngine = (() => {
         wg.addColorStop(0, '#111215'); wg.addColorStop(1, '#0c0d0f');
         webDisc = wg;
       } catch (e) { webDisc = null; }
+    }
+    function doRebuild(m) {
+      if (disposed) return;
+      DPR = clamp((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 1, 2);
+      W = m.w; H = m.h;
+      canvas.width = Math.max(1, Math.round(W * DPR));
+      canvas.height = Math.max(1, Math.round(H * DPR));
+      S = canvas.getContext('2d');
+      if (!S) { ready = false; return; }
+      S.setTransform(DPR, 0, 0, DPR, 0, 0);
+      S_MAIN = S;
+      // optional second surface: the host masks a blurred copy of the same frame over the
+      // reading column, so the text area gets a low-pass version of the field instead of
+      // a punched-out hole (the "guardBlur" switch)
+      if (canvas2) {
+        canvas2.width = canvas.width; canvas2.height = canvas.height;
+        S2 = canvas2.getContext('2d');
+      }
+      HAS_FILTER = 'filter' in S;
+
+      computeGeom();
 
       release(webBase);
       if (webLayers.length) webLayers.forEach(release);
@@ -656,7 +668,19 @@ const HalofluxEngine = (() => {
     }
     function applyRebuilds() {
       if (!ready || disposed) return;
-      if (rebuildQ.resize) { doRebuild(measure()); return; }
+      // a pan is cheap: just re-derive cx/cy/R/RO and redraw on the next frame
+      if (rebuildQ.geometry) { rebuildQ.geometry = 0; computeGeom(); dirty = true; }
+      if (rebuildQ.resize) {
+        // a full rebuild reallocates every buffer, so a drag is coalesced to ~7/s
+        const t = nowMs();
+        if (t - lastBigRebuild >= 140) {
+          lastBigRebuild = t;
+          doRebuild(measure());
+          painted = false;
+          return;
+        }
+        return; // still queued for the next frame inside the throttle window
+      }
       if (rebuildQ.web) { rebuildQ.web = 0; buildWeb(); }
       if (rebuildQ.slots) { rebuildQ.slots = 0; for (const s of slots) { release(s.c); s.c = null; } }
       if (rebuildQ.flyers) { rebuildQ.flyers = 0; initFlyers(); }
@@ -2147,7 +2171,11 @@ const HalofluxEngine = (() => {
       if (errT >= 0) { errT += dt; if (errT > 0.9) errT = -1; }
     }
     function drawGauges() {
-      S.setTransform(DPR, 0, 0, DPR, 0, 0);
+      // The gauges belong to the ring, not to the screen. They used to reset to a
+      // plain DPR transform here, so under 运镜 the ring pushed in while these arcs
+      // stayed nailed to the viewport. Run them through the ring's own camera
+      // transform (same one drawRing rides) so they travel and scale with it.
+      camT(S, DPR);
       S.save(); S.translate(cx, cy);
       // context occupancy: an arc inside the ring, cyan until it gets tight. When the
       // host does not publish a context window, a grey base track is still drawn, so
@@ -2206,6 +2234,8 @@ const HalofluxEngine = (() => {
       // failed tool's own angle.
       if (errT >= 0 && num(C.errFx, 0) >= 0.5) {
         const k = Math.sin(Math.PI * Math.min(1, errT / 0.9));
+        // a full-frame wash must NOT inherit the camera matrix above
+        S.setTransform(DPR, 0, 0, DPR, 0, 0);
         S.globalCompositeOperation = 'lighter';
         S.fillStyle = 'rgba(255,70,60,' + (0.05 * k) + ')';
         S.fillRect(0, 0, W, H);
@@ -2262,6 +2292,7 @@ const HalofluxEngine = (() => {
       if (num(C.phaseRing, 0) < 0.5) return;
       const ph = phaseNow();
       const RA = R * 0.86;
+      camT(S, DPR);                  // ride the ring's camera (see drawGauges)
       S.save(); S.translate(cx, cy);
       // the phase signature is MOTION, not colour: each phase has its own rhythm
       const a0 = -Math.PI / 2;
@@ -2293,6 +2324,7 @@ const HalofluxEngine = (() => {
       if (num(C.errPin, 0) < 0.5) return;
       const tools = live && Array.isArray(live.tools) ? live.tools : [];
       if (!tools.length) return;
+      camT(S, DPR);                  // ride the ring's camera (see drawGauges)
       S.save(); S.translate(cx, cy);
       for (let i = Math.max(0, tools.length - 8); i < tools.length; i++) {
         const t = tools[i];
@@ -2320,6 +2352,7 @@ const HalofluxEngine = (() => {
       const med = sorted[sorted.length >> 1] || tps;
       const k = clamp(tps / Math.max(1, med * 2), 0, 1);
       const RA = R * 0.92, a0 = -Math.PI * 0.72, span = 0.42;
+      camT(S, DPR);                  // ride the ring's camera (see drawGauges)
       S.save(); S.translate(cx, cy);
       S.strokeStyle = 'rgba(150,225,255,.18)'; S.lineWidth = 3;
       S.beginPath(); S.arc(0, 0, RA, a0 - span, a0 + span); S.stroke();

@@ -1,7 +1,7 @@
 > 基于 **HALOFLUX**（原作 [Ryder191](https://github.com/Ryder191/haloflux)）与 **Ke-wood** 的 DSH 移植（v0.7.1）；本仓库是其上的社区改进版，仅限非商业使用。
 >
-> **当前版本：v0.8.0**（2026-11-08） · [更新日志](CHANGELOG.md) · [历史版本下载](https://github.com/Michael-ZAG/dsh-haloflux/releases)
-> 仓库根目录始终是最新版本；旧版本（≤ 0.7.1）保留在 Releases 里，可随时下载。
+> **当前版本：v0.8.1**（2026-11-09） · [更新日志](CHANGELOG.md) · [历史版本下载](https://github.com/Michael-ZAG/dsh-haloflux/releases)
+> 仓库根目录始终是最新版本；旧版本（≤ 0.8.0）保留在 Releases 里，可随时下载。
 # dsh-haloflux — 实时光环背景
 
 把 **HALOFLUX** 的纯 Canvas 光场可视化，做成 DeepSeek Harness Web GUI 的全帧背景装饰，
