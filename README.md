@@ -273,7 +273,12 @@ node tools/session-switch.cjs   # 切会话回归：运行态不被清、内容�
 
 - 原作 **HALOFLUX**：Copyright (c) 2026 Ryder191（RYDER CODE / Ms MAIKEBAIs CAT），
   <https://github.com/Ryder191/haloflux>，PolyForm Noncommercial License 1.0.0。
-- 本移植：同样**仅限非商业使用**，可在保留 `LICENSE` 与 `NOTICE` 的前提下自由分发与修改。
+- DSH 移植：**Ke-wood**，<https://github.com/Ke-wood/dsh-haloflux>，
+  把 HALOFLUX 接入 DSH 的 `shell.overlay`、会话事件流、设置页与 HUD，同样适用 PolyForm Noncommercial 1.0.0。
+- 本发行分支：**Michael-ZAG**，<https://github.com/Michael-ZAG/dsh-haloflux>，
+  在 Ke-wood 的移植版本上重做 HUD 布局（右侧 5 面板机架 + 右下 2 面板底座）、工具栏安全线与自动淡出、图层下沉、参数扩至 117 项。
+- 本分支：同样**仅限非商业使用**，可在保留 `LICENSE` 与 `NOTICE` 的前提下自由分发与修改。
+- `LICENSE` 是 PolyForm Noncommercial 1.0.0 全文（含上游关于壁纸平台转发的附加条款），`NOTICE` 原样保留上游 Required Notice 两行。
 - 右侧 7 面板（5 面板机架 + 2 面板底座，`src/lab.js`；上游的粒子流场面板作为可选第 6 行保留）同样移植自上游 `lab.html`，随上游一并适用 PolyForm Noncommercial 1.0.0：
   `LAB RACK ported from HALOFLUX by Ryder191 (PolyForm Noncommercial 1.0.0)`。
 - 再分发、二次修改请保留 `NOTICE` 中的 Required Notice 行。

@@ -1,38 +1,34 @@
-dsh-haloflux
-============
+dsh-haloflux（非官方发行分支）
+==============================
 
-HALOFLUX for the DeepSeek Harness Web GUI — a live light-ring background
-decoration driven by the current session.
+HALOFLUX for the DeepSeek Harness Web GUI — 随当前会话实时变化的全帧光环背景。
 
-    HALOFLUX — Copyright (c) 2026 Ryder191 (RYDER CODE / Ms MAIKEBAIs CAT)
+上游与作者
+----------
+原作 HALOFLUX（视觉、Canvas 引擎、环与光带构成、节拍时序、运镜）：
+    Copyright (c) 2026 Ryder191（RYDER CODE / Ms MAIKEBAIs CAT）
     https://github.com/Ryder191/haloflux
 
-    Required Notice: Copyright (c) 2026 Ryder191 (RYDER CODE / Ms MAIKEBAIs CAT) — https://github.com/Ryder191/haloflux
-    Required Notice: Noncommercial use only. Any commercial use is strictly prohibited. No commercial licenses are offered.
+DSH 移植（把 HALOFLUX 接入 DeepSeek Harness 的 shell.overlay、会话事件流、
+设置页与 HUD）：
+    Ke-wood — https://github.com/Ke-wood/dsh-haloflux
 
-Original work
---------------
-HALOFLUX (https://github.com/Ryder191/haloflux) is the origin of the canvas
-light-field visualisation in `src/engine.js`: the ring composition, the layered
-light beams, the data-panel language, the motion timing and the color treatment
-are the original author's work and remain licensed under the PolyForm
-Noncommercial License 1.0.0 (see `LICENSE`).
+本发行分支（v0.8.0 起）：
+    Michael-ZAG — https://github.com/Michael-ZAG/dsh-haloflux
+    在 Ke-wood 的移植版本上做了 HUD 布局重做（右侧 5 面板机架 + 右下 2 面板底座）、
+    工具栏安全线与自动淡出、图层下沉、参数扩至 117 项。
 
-This port
----------
-The DeepSeek Harness integration is written for this project: the plugin
-packaging (bundle row, client module), the live session adapter
-(`src/live.js`), the HUD (`src/hud.js`), the settings page
-(`src/settings.js`), the shared parameter store (`src/state.js`), the
-three-level data capture dial, and the DSH-specific tuning of the engine.
+Required Notice（必须原样保留）
+-------------------------------
+Required Notice: Copyright (c) 2026 Ryder191 (RYDER CODE / Ms MAIKEBAIs CAT) — https://github.com/Ryder191/haloflux
+Required Notice: Noncommercial use only. Any commercial use is strictly prohibited. No commercial licenses are offered.
 
-Redistribution must keep this NOTICE and `LICENSE` together with the source.
-
-中文
+许可
 ----
-本插件是 HALOFLUX 的二次创作：`src/engine.js` 中的光环构图、光束系统、数据面板
-语言、动态节奏与配色均源自原作者 Ryder191 的作品，仍按 PolyForm Noncommercial
-1.0.0 授权（见 `LICENSE`）。DSH 适配部分（插件封装、会话数据适配、HUD、设置页、
-参数存储、三档数据抓取）为本项目新增。
+PolyForm Noncommercial License 1.0.0，全文见同目录 LICENSE。
+仅限非商业使用；再分发或二次修改必须保留本 NOTICE 与 LICENSE。
 
-**仅限非商业使用**；再分发时必须同时保留本 NOTICE 与 `LICENSE`。
+关于 ACyCar1o/dsh-hud-haloflux
+------------------------------
+本项目未使用 https://github.com/ACyCar1o/dsh-hud-haloflux 的任何代码。
+那是另一套桌面壁纸方案（Node 服务 + SSE + Lively Wallpaper），与本插件无代码交集。
